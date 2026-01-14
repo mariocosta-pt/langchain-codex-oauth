@@ -8,6 +8,7 @@ This project authenticates locally via OpenAI OAuth (no `OPENAI_API_KEY`) and ta
 - A dev-friendly adapter that makes Codex feel like a native-ish LangChain chat model.
 - Local OAuth login (`langchain-codex-oauth auth login`) storing credentials under `~/.langchain-codex-oauth/`.
 - Streaming support via SSE (`.stream()` yields chunks as they arrive).
+- Tool calling via `.bind_tools(...)` (useful for LangGraph agents).
 
 ## What this is not
 - Not for sharing accounts/subscriptions.
@@ -45,9 +46,10 @@ for chunk in model.stream(messages):
     print(chunk.content, end="", flush=True)
 ```
 
-Or run the example:
+Or run the examples:
 ```bash
 python examples/hello.py
+python examples/tools.py
 ```
 
 ## Notes
