@@ -26,6 +26,11 @@ venv/
 .env.*
 !.env.example
 
+# Local-only docs (do not commit)
+AGENTS.md
+PLAN.md
+README-dev.md
+
 # If you ever point auth storage into repo
 .langchain-codex-oauth/
 
