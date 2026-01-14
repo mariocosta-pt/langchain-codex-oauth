@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "langchain-codex-oauth"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Use ChatGPT Plus/Pro Codex (OAuth) as a LangChain/LangGraph chat model"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -51,3 +51,6 @@ include = ["codex_oauth*", "langchain_codex_oauth*"]
 
 [tool.setuptools.package-data]
 "codex_oauth.bundled_prompts" = ["*.md"]
+
+[tool.setuptools.dynamic]
+version = { attr = "langchain_codex_oauth.version.__version__" }

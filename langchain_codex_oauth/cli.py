@@ -12,6 +12,7 @@ from codex_oauth.auth import (
 )
 from codex_oauth.exceptions import OAuthFlowError
 from codex_oauth.store import AuthStore, OAuthCredentials
+from langchain_codex_oauth.version import __version__
 
 
 def _format_ms(ms: int) -> str:
@@ -76,6 +77,7 @@ def _cmd_auth_logout(_: argparse.Namespace) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="langchain-codex-oauth")
+    parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 
     auth = sub.add_parser("auth", help="Manage OAuth credentials")
