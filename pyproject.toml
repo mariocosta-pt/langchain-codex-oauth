@@ -48,3 +48,6 @@ known-first-party = ["codex_oauth", "langchain_codex_oauth"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["codex_oauth*", "langchain_codex_oauth*"]
+
+[tool.setuptools.package-data]
+"codex_oauth.bundled_prompts" = ["*.md"]

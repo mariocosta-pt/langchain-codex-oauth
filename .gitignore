@@ -24,6 +24,7 @@ venv/
 # Local env files
 .env
 .env.*
+!.env.example
 
 # If you ever point auth storage into repo
 .langchain-codex-oauth/

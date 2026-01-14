@@ -8,6 +8,7 @@ This project authenticates locally via OpenAI OAuth (no `OPENAI_API_KEY`) and ta
 - A dev-friendly adapter that makes Codex feel like a native-ish LangChain chat model.
 - Local OAuth login (`langchain-codex-oauth auth login`) storing credentials under `~/.langchain-codex-oauth/`.
 - Streaming support via SSE (`.stream()` yields chunks as they arrive).
+- Async support via `.ainvoke()` / `.astream()`.
 - Tool calling via `.bind_tools(...)` (useful for LangGraph agents).
 
 ## What this is not
@@ -53,5 +54,5 @@ python examples/tools.py
 ```
 
 ## Notes
-- The Codex backend requires validated `instructions`. The first model call may fetch the latest Codex CLI prompt from GitHub and cache it under `~/.langchain-codex-oauth/cache/`.
+- The Codex backend requires validated `instructions`. By default the library uses cached prompts, attempts GitHub fetch if missing, and falls back to bundled prompts (override with `LANGCHAIN_CODEX_OAUTH_INSTRUCTIONS_MODE`).
 - If you hit ChatGPT usage limits, the library normalizes some backend “usage limit” errors to HTTP 429 semantics.

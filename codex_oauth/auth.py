@@ -154,6 +154,40 @@ def refresh_access_token(
     )
 
 
+async def arefresh_access_token(
+    *, refresh_token: str, http: httpx.AsyncClient | None = None
+) -> TokenResponse:
+    client = http or httpx.AsyncClient(timeout=30.0)
+    try:
+        response = await client.post(
+            TOKEN_URL,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "refresh_token",
+                "client_id": CLIENT_ID,
+                "refresh_token": refresh_token,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        raise TokenRefreshError("Token refresh failed") from exc
+    finally:
+        if http is None:
+            await client.aclose()
+
+    access = str(data.get("access_token") or "")
+    refresh = str(data.get("refresh_token") or "")
+    expires_in = int(data.get("expires_in") or 0)
+    if not (access and refresh and expires_in):
+        raise TokenRefreshError("Refresh token response missing fields")
+    return TokenResponse(
+        access=access,
+        refresh=refresh,
+        expires_at_ms=int(time.time() * 1000) + expires_in * 1000,
+    )
+
+
 class OAuthCallbackServer(HTTPServer):
     _oauth_result: dict[str, str] | None
 

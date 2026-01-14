@@ -4,7 +4,9 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
@@ -13,12 +15,11 @@ from codex_oauth.models import normalize_model
 _GITHUB_API_RELEASES = "https://api.github.com/repos/openai/codex/releases/latest"
 _GITHUB_HTML_RELEASES = "https://github.com/openai/codex/releases/latest"
 
+INSTRUCTIONS_MODE_ENV = "LANGCHAIN_CODEX_OAUTH_INSTRUCTIONS_MODE"
+InstructionsMode = Literal["auto", "cache", "github", "bundled"]
 
-class _CacheMeta(dict):
-    etag: str | None
-    tag: str
-    last_checked_ms: int
-    url: str
+# Bundled fallback shipped with the package.
+DEFAULT_BUNDLED_CACHE_FILE = "gpt-5.2-codex-instructions.md"
 
 
 def _home_dir() -> Path:
@@ -82,6 +83,35 @@ def _model_family(model: str) -> PromptFamily:
     return _FAMILIES[4]
 
 
+def _instructions_mode() -> InstructionsMode:
+    raw = (os.environ.get(INSTRUCTIONS_MODE_ENV) or "auto").strip().lower()
+    if raw in {"auto", "cache", "github", "bundled"}:
+        return raw  # type: ignore[return-value]
+    return "auto"
+
+
+def _load_bundled(cache_file: str) -> str | None:
+    try:
+        pkg = resources.files("codex_oauth.bundled_prompts")
+        path = pkg / cache_file
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
+def _load_bundled_for_family(family: PromptFamily) -> str:
+    text = _load_bundled(family.cache_file)
+    if text:
+        return text
+    fallback = _load_bundled(DEFAULT_BUNDLED_CACHE_FILE)
+    if fallback:
+        return fallback
+    raise RuntimeError(
+        "No bundled instructions found. Reinstall the package or set "
+        f"`{INSTRUCTIONS_MODE_ENV}=github` to fetch instructions."
+    )
+
+
 def _latest_release_tag(http: httpx.Client) -> str:
     try:
         response = http.get(_GITHUB_API_RELEASES, timeout=15.0)
@@ -96,14 +126,12 @@ def _latest_release_tag(http: httpx.Client) -> str:
     response = http.get(_GITHUB_HTML_RELEASES, follow_redirects=True, timeout=15.0)
     response.raise_for_status()
 
-    # If redirected to /tag/<tag>, use that.
     final_url = str(response.url)
     if "/tag/" in final_url:
         tag = final_url.rsplit("/tag/", 1)[-1]
         if tag and "/" not in tag:
             return tag
 
-    # Fallback: try regex-less parsing.
     text = response.text
     marker = "/openai/codex/releases/tag/"
     idx = text.find(marker)
@@ -116,95 +144,57 @@ def _latest_release_tag(http: httpx.Client) -> str:
     raise RuntimeError("Failed to determine latest Codex release tag")
 
 
-def get_codex_instructions(http: httpx.Client, *, model: str) -> str:
-    """Fetch and cache Codex CLI model-family instructions.
+async def _alatest_release_tag(http: httpx.AsyncClient) -> str:
+    try:
+        response = await http.get(_GITHUB_API_RELEASES, timeout=15.0)
+        if response.status_code == 200:
+            data = response.json()
+            tag = data.get("tag_name") if isinstance(data, dict) else None
+            if isinstance(tag, str) and tag:
+                return tag
+    except Exception:
+        pass
 
-    The ChatGPT/Codex backend validates `instructions` and expects Codex CLI style
-    prompts. We fetch the latest prompt from `openai/codex` releases, cache it on
-    disk, and reuse it across requests.
-    """
-
-    family = _model_family(model)
-    cache_dir = _cache_dir()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    cache_path = cache_dir / family.cache_file
-    meta_path = cache_dir / (family.cache_file.replace(".md", "-meta.json"))
-
-    cached_etag: str | None = None
-    cached_tag: str | None = None
-    cached_checked_ms: int | None = None
-
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            if isinstance(meta, dict):
-                cached_etag = (
-                    meta.get("etag") if isinstance(meta.get("etag"), str) else None
-                )
-                cached_tag = (
-                    meta.get("tag") if isinstance(meta.get("tag"), str) else None
-                )
-                cached_checked_ms = (
-                    int(meta.get("last_checked_ms"))
-                    if isinstance(meta.get("last_checked_ms"), int)
-                    else None
-                )
-        except Exception:
-            cached_etag = None
-            cached_tag = None
-            cached_checked_ms = None
-
-    # Rate limit protection: if checked recently and cache exists, use it.
-    ttl_ms = 15 * 60 * 1000
-    now_ms = int(time.time() * 1000)
-    if (
-        cached_checked_ms
-        and cache_path.exists()
-        and (now_ms - cached_checked_ms) < ttl_ms
-    ):
-        return cache_path.read_text(encoding="utf-8")
-
-    tag = _latest_release_tag(http)
-    if cached_tag != tag:
-        cached_etag = None
-
-    url = f"https://raw.githubusercontent.com/openai/codex/{tag}/codex-rs/core/{family.prompt_file}"
-
-    headers: dict[str, str] = {}
-    if cached_etag:
-        headers["If-None-Match"] = cached_etag
-
-    response = http.get(url, headers=headers, timeout=30.0)
-
-    if response.status_code == 304 and cache_path.exists():
-        meta_path.write_text(
-            json.dumps(
-                {
-                    "etag": cached_etag,
-                    "tag": tag,
-                    "last_checked_ms": now_ms,
-                    "url": url,
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        return cache_path.read_text(encoding="utf-8")
-
+    response = await http.get(
+        _GITHUB_HTML_RELEASES, follow_redirects=True, timeout=15.0
+    )
     response.raise_for_status()
 
-    instructions = response.text
-    etag = response.headers.get("etag")
+    final_url = str(response.url)
+    if "/tag/" in final_url:
+        tag = final_url.rsplit("/tag/", 1)[-1]
+        if tag and "/" not in tag:
+            return tag
 
-    cache_path.write_text(instructions, encoding="utf-8")
+    text = response.text
+    marker = "/openai/codex/releases/tag/"
+    idx = text.find(marker)
+    if idx >= 0:
+        tail = text[idx + len(marker) :]
+        tag = tail.split('"', 1)[0]
+        if tag:
+            return tag
+
+    raise RuntimeError("Failed to determine latest Codex release tag")
+
+
+def _write_cache(
+    cache_path: Path,
+    meta_path: Path,
+    *,
+    tag: str,
+    url: str,
+    etag: str | None,
+    text: str,
+) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(text, encoding="utf-8")
     meta_path.write_text(
         json.dumps(
             {
                 "etag": etag,
                 "tag": tag,
-                "last_checked_ms": now_ms,
+                "last_checked_ms": int(time.time() * 1000),
                 "url": url,
             },
             indent=2,
@@ -213,4 +203,93 @@ def get_codex_instructions(http: httpx.Client, *, model: str) -> str:
         encoding="utf-8",
     )
 
-    return instructions
+
+def get_codex_instructions(http: httpx.Client, *, model: str) -> str:
+    """Resolve the `instructions` payload for the Codex backend.
+
+    Default behavior is offline-friendly: if a cached prompt exists, use it.
+    If not, try GitHub; if GitHub fails, fall back to bundled prompts.
+    """
+
+    mode = _instructions_mode()
+    family = _model_family(model)
+
+    cache_dir = _cache_dir()
+    cache_path = cache_dir / family.cache_file
+    meta_path = cache_dir / (family.cache_file.replace(".md", "-meta.json"))
+
+    if mode in {"auto", "cache"} and cache_path.exists():
+        return cache_path.read_text(encoding="utf-8")
+
+    if mode == "cache":
+        raise RuntimeError(
+            f"Instructions cache is missing ({cache_path}). "
+            f"Set `{INSTRUCTIONS_MODE_ENV}=github` to fetch, or "
+            f"`{INSTRUCTIONS_MODE_ENV}=bundled`."
+        )
+
+    if mode == "bundled":
+        return _load_bundled_for_family(family)
+
+    # mode == github or auto with no cache
+    try:
+        tag = _latest_release_tag(http)
+        url = f"https://raw.githubusercontent.com/openai/codex/{tag}/codex-rs/core/{family.prompt_file}"
+        response = http.get(url, timeout=30.0)
+        response.raise_for_status()
+        _write_cache(
+            cache_path,
+            meta_path,
+            tag=tag,
+            url=url,
+            etag=response.headers.get("etag"),
+            text=response.text,
+        )
+        return response.text
+    except Exception:
+        if mode == "github":
+            raise
+        return _load_bundled_for_family(family)
+
+
+async def aget_codex_instructions(http: httpx.AsyncClient, *, model: str) -> str:
+    """Async variant of `get_codex_instructions`."""
+
+    mode = _instructions_mode()
+    family = _model_family(model)
+
+    cache_dir = _cache_dir()
+    cache_path = cache_dir / family.cache_file
+    meta_path = cache_dir / (family.cache_file.replace(".md", "-meta.json"))
+
+    if mode in {"auto", "cache"} and cache_path.exists():
+        return cache_path.read_text(encoding="utf-8")
+
+    if mode == "cache":
+        raise RuntimeError(
+            f"Instructions cache is missing ({cache_path}). "
+            f"Set `{INSTRUCTIONS_MODE_ENV}=github` to fetch, or "
+            f"`{INSTRUCTIONS_MODE_ENV}=bundled`."
+        )
+
+    if mode == "bundled":
+        return _load_bundled_for_family(family)
+
+    try:
+        tag = await _alatest_release_tag(http)
+        url = f"https://raw.githubusercontent.com/openai/codex/{tag}/codex-rs/core/{family.prompt_file}"
+        response = await http.get(url, timeout=30.0)
+        response.raise_for_status()
+        _write_cache(
+            cache_path,
+            meta_path,
+            tag=tag,
+            url=url,
+            etag=response.headers.get("etag"),
+            text=response.text,
+        )
+        return response.text
+    except Exception:
+        if mode == "github":
+            raise
+        return _load_bundled_for_family(family)

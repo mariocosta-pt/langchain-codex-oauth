@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from typing import Any, cast
 
-from codex_oauth.client import CodexClient
+from codex_oauth.client import AsyncCodexClient, CodexClient
 from codex_oauth.models import (
     InputItem,
     function_call_item,
@@ -17,7 +17,10 @@ from codex_oauth.store import AuthStore
 from langchain_codex_oauth.tooling import convert_tools, normalize_tool_choice
 
 try:
-    from langchain_core.callbacks.manager import CallbackManagerForLLMRun
+    from langchain_core.callbacks.manager import (
+        AsyncCallbackManagerForLLMRun,
+        CallbackManagerForLLMRun,
+    )
     from langchain_core.language_models.chat_models import BaseChatModel
     from langchain_core.messages import (
         AIMessage,
@@ -113,7 +116,10 @@ class ChatCodexOAuth(BaseChatModel):
         self.reasoning_summary = reasoning_summary
         self.text_verbosity = text_verbosity
         self.include = include
-        self._client = CodexClient(auth_store=auth_store or AuthStore())
+
+        store = auth_store or AuthStore()
+        self._client = CodexClient(auth_store=store)
+        self._async_client = AsyncCodexClient(auth_store=store)
 
     @property
     def _llm_type(self) -> str:
@@ -229,4 +235,82 @@ class ChatCodexOAuth(BaseChatModel):
             if delta:
                 if run_manager:
                     run_manager.on_llm_new_token(delta)
+                yield ChatGenerationChunk(message=AIMessageChunk(content=delta))
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        if stop:
+            raise ValueError("stop sequences are not supported yet")
+
+        tools = kwargs.get("tools")
+        tool_choice = kwargs.get("tool_choice")
+
+        parsed = await self._async_client.acomplete(
+            input_items=_to_input_items(messages),
+            model=self.model,
+            tools=tools if isinstance(tools, list) else None,
+            tool_choice=tool_choice,
+            reasoning_effort=self.reasoning_effort,
+            reasoning_summary=self.reasoning_summary,
+            text_verbosity=self.text_verbosity,
+            include=self.include,
+        )
+
+        tool_calls = _ensure_tool_call_ids(parsed.tool_calls)
+        message = AIMessage(
+            content=parsed.content,
+            tool_calls=tool_calls,
+            invalid_tool_calls=parsed.invalid_tool_calls,
+        )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        if stop:
+            raise ValueError("stop sequences are not supported yet")
+
+        tools = kwargs.get("tools")
+        tool_choice = kwargs.get("tool_choice")
+
+        input_items = _to_input_items(messages)
+
+        async for event in self._async_client.astream_events(
+            input_items=input_items,
+            model=self.model,
+            tools=tools if isinstance(tools, list) else None,
+            tool_choice=tool_choice,
+            reasoning_effort=self.reasoning_effort,
+            reasoning_summary=self.reasoning_summary,
+            text_verbosity=self.text_verbosity,
+            include=self.include,
+        ):
+            if is_terminal_event(event):
+                parsed = parse_assistant_message(event.get("response"))
+                tool_calls = _ensure_tool_call_ids(parsed.tool_calls)
+
+                if tool_calls or parsed.invalid_tool_calls:
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(
+                            content="",
+                            tool_calls=tool_calls,
+                            invalid_tool_calls=parsed.invalid_tool_calls,
+                            chunk_position="last",
+                        )
+                    )
+                return
+
+            delta = extract_text_delta(event)
+            if delta:
+                if run_manager:
+                    await run_manager.on_llm_new_token(delta)
                 yield ChatGenerationChunk(message=AIMessageChunk(content=delta))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from typing import Any
 
 
@@ -13,6 +13,43 @@ def iter_sse_events(lines: Iterable[str]) -> Iterator[dict[str, Any]]:
 
     data_lines: list[str] = []
     for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        if not line:
+            if data_lines:
+                payload = "\n".join(data_lines)
+                data_lines = []
+                if payload.strip() == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    yield event
+            continue
+
+        if line.startswith(":"):
+            continue
+
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+
+    if data_lines:
+        payload = "\n".join(data_lines)
+        if payload.strip() != "[DONE]":
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError:
+                return
+            if isinstance(event, dict):
+                yield event
+
+
+async def aiter_sse_events(lines: AsyncIterable[str]) -> AsyncIterator[dict[str, Any]]:
+    """Async variant of `iter_sse_events`."""
+
+    data_lines: list[str] = []
+    async for raw_line in lines:
         line = raw_line.rstrip("\n")
         if not line:
             if data_lines:
