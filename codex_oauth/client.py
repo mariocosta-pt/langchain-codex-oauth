@@ -105,6 +105,8 @@ class CodexClient:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
         reasoning_effort: str | None = None,
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
@@ -115,13 +117,17 @@ class CodexClient:
             "store": False,
             "stream": True,
             "input": input_items,
-            "include": include or DEFAULT_INCLUDE,
+            "include": DEFAULT_INCLUDE if include is None else include,
         }
 
         if tools is not None:
             request_body["tools"] = tools
         if tool_choice is not None:
             request_body["tool_choice"] = tool_choice
+        if temperature is not None:
+            request_body["temperature"] = temperature
+        if max_output_tokens is not None:
+            request_body["max_output_tokens"] = max_output_tokens
 
         if reasoning_effort or reasoning_summary:
             request_body["reasoning"] = {
@@ -139,6 +145,8 @@ class CodexClient:
             )
 
             tool_choice_removed = False
+            temperature_removed = False
+            max_output_tokens_removed = False
             attempt = 0
             while True:
                 try:
@@ -164,6 +172,29 @@ class CodexClient:
                             ):
                                 request_body.pop("tool_choice", None)
                                 tool_choice_removed = True
+                                continue
+
+                            if (
+                                not temperature_removed
+                                and temperature is not None
+                                and err.status_code == 400
+                                and "temperature" in str(err).lower()
+                            ):
+                                request_body.pop("temperature", None)
+                                temperature_removed = True
+                                continue
+
+                            if (
+                                not max_output_tokens_removed
+                                and max_output_tokens is not None
+                                and err.status_code == 400
+                                and any(
+                                    key in str(err).lower()
+                                    for key in ("max_output_tokens", "max_tokens")
+                                )
+                            ):
+                                request_body.pop("max_output_tokens", None)
+                                max_output_tokens_removed = True
                                 continue
 
                             if (
@@ -195,6 +226,8 @@ class CodexClient:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
         reasoning_effort: str | None = None,
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
@@ -206,6 +239,8 @@ class CodexClient:
             model=model,
             tools=tools,
             tool_choice=tool_choice,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
             reasoning_effort=reasoning_effort,
             reasoning_summary=reasoning_summary,
             text_verbosity=text_verbosity,
@@ -370,6 +405,8 @@ class AsyncCodexClient:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
         reasoning_effort: str | None = None,
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
@@ -380,13 +417,17 @@ class AsyncCodexClient:
             "store": False,
             "stream": True,
             "input": input_items,
-            "include": include or DEFAULT_INCLUDE,
+            "include": DEFAULT_INCLUDE if include is None else include,
         }
 
         if tools is not None:
             request_body["tools"] = tools
         if tool_choice is not None:
             request_body["tool_choice"] = tool_choice
+        if temperature is not None:
+            request_body["temperature"] = temperature
+        if max_output_tokens is not None:
+            request_body["max_output_tokens"] = max_output_tokens
 
         if reasoning_effort or reasoning_summary:
             request_body["reasoning"] = {
@@ -404,6 +445,8 @@ class AsyncCodexClient:
             )
 
             tool_choice_removed = False
+            temperature_removed = False
+            max_output_tokens_removed = False
             attempt = 0
             while True:
                 try:
@@ -429,6 +472,29 @@ class AsyncCodexClient:
                             ):
                                 request_body.pop("tool_choice", None)
                                 tool_choice_removed = True
+                                continue
+
+                            if (
+                                not temperature_removed
+                                and temperature is not None
+                                and err.status_code == 400
+                                and "temperature" in str(err).lower()
+                            ):
+                                request_body.pop("temperature", None)
+                                temperature_removed = True
+                                continue
+
+                            if (
+                                not max_output_tokens_removed
+                                and max_output_tokens is not None
+                                and err.status_code == 400
+                                and any(
+                                    key in str(err).lower()
+                                    for key in ("max_output_tokens", "max_tokens")
+                                )
+                            ):
+                                request_body.pop("max_output_tokens", None)
+                                max_output_tokens_removed = True
                                 continue
 
                             if (
@@ -461,6 +527,8 @@ class AsyncCodexClient:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
         reasoning_effort: str | None = None,
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
@@ -472,6 +540,8 @@ class AsyncCodexClient:
             model=model,
             tools=tools,
             tool_choice=tool_choice,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
             reasoning_effort=reasoning_effort,
             reasoning_summary=reasoning_summary,
             text_verbosity=text_verbosity,

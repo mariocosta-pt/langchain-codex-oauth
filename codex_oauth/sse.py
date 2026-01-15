@@ -88,13 +88,24 @@ def is_terminal_event(event: dict[str, Any]) -> bool:
 
 
 def extract_text_delta(event: dict[str, Any]) -> str | None:
-    """Best-effort extraction of text deltas from response events."""
+    """Best-effort extraction of user-visible text deltas.
 
-    if isinstance(event.get("delta"), str):
-        return event["delta"]
+    The Codex backend emits many `.delta` event types (including reasoning). For
+    ChatOpenAI parity we only surface output-text deltas.
+    """
 
     event_type = str(event.get("type") or "")
-    if event_type.endswith(".delta") and isinstance(event.get("text"), str):
+
+    # OpenAI Responses-style text streaming.
+    # Example: {"type": "response.output_text.delta", "delta": "hi"}
+    if event_type.endswith("output_text.delta"):
+        if isinstance(event.get("delta"), str):
+            return event["delta"]
+        if isinstance(event.get("text"), str):
+            return event["text"]
+
+    # Some backends use a generic `...text.delta` with a `text` field.
+    if event_type.endswith("text.delta") and isinstance(event.get("text"), str):
         return event["text"]
 
     return None

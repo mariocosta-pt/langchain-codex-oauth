@@ -20,6 +20,11 @@ def test_text_delta_extraction() -> None:
     assert extract_text_delta(event) == "hello"
 
 
+def test_text_delta_ignores_reasoning_like_deltas() -> None:
+    event = {"type": "response.reasoning_summary.delta", "delta": "secret"}
+    assert extract_text_delta(event) is None
+
+
 def test_terminal_event_detection() -> None:
     assert is_terminal_event({"type": "response.done"})
     assert is_terminal_event({"type": "response.completed"})
