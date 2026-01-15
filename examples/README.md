@@ -53,4 +53,6 @@ python -m pip install langgraph
 
 python examples/langgraph/system_prompt_drift.py --mode strict
 python examples/langgraph/travel_planner_graph.py --city Tokyo --budget 600 --mode strict
+# Push it harder (budget must be close to cap, forces better tool/instruction adherence)
+python examples/langgraph/travel_planner_graph.py --city Tokyo --budget 600 --mode strict --min-spend-ratio 0.95
 ```

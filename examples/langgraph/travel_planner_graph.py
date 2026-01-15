@@ -33,7 +33,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.tools import tool
 
 from langchain_codex_oauth import ChatCodexOAuth
@@ -170,6 +176,12 @@ def calc(expression: str) -> str:
 
 
 TOOLS = [city_info, calc]
+
+
+def _has_recent_tool_results(messages: list[BaseMessage]) -> bool:
+    # In a tool loop, ToolNode appends ToolMessage results after an AI tool call.
+    recent = messages[-6:] if len(messages) > 6 else messages
+    return any(isinstance(m, ToolMessage) for m in recent)
 
 
 # -----------------------------
@@ -309,31 +321,56 @@ def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
     _print_header("[node] researcher_agent")
 
     city = state["city"]
+    messages = state["messages"]
 
-    model = ChatCodexOAuth(model="gpt-5.2-codex", system_prompt_mode=mode).bind_tools(
-        TOOLS
-    )
+    # Two-phase tool loop:
+    # 1) Force at least one tool call (city_info, ideally calc too)
+    # 2) After tool results are present, write research notes without calling tools
+    has_tool_results = _has_recent_tool_results(messages)
 
-    system = SystemMessage(
-        content=(
-            "You are a research assistant for trip planning.\n"
-            "Rules:\n"
-            "- Use the city_info tool at least once for the target city\n"
-            "- If you need arithmetic, use calc\n"
-            "- Output a short fact list relevant to the itinerary and budget"
+    if not has_tool_results:
+        model = ChatCodexOAuth(
+            model="gpt-5.2-codex", system_prompt_mode=mode
+        ).bind_tools(
+            TOOLS,
+            tool_choice="any",
         )
-    )
-
-    context = HumanMessage(
-        content=(
-            f"City: {city}\n\n"
-            "Return useful bullet facts (transit/food/areas/day trips)."
+        system = SystemMessage(
+            content=(
+                "You are a research assistant for trip planning.\n"
+                "Rules:\n"
+                "- You MUST call tools in this step\n"
+                "- Call city_info(city) for the target city\n"
+                "- Also call calc(...) to compute a 2-day rough food+transit estimate\n"
+                "- Do not write the final notes yet"
+            )
         )
-    )
+        user = HumanMessage(
+            content=(
+                f"City: {city}\n"
+                "Call tools now. Compute: (food_per_day + transit_per_day) * 2 using calc."
+            )
+        )
+    else:
+        model = ChatCodexOAuth(
+            model="gpt-5.2-codex", system_prompt_mode=mode
+        ).bind_tools(TOOLS)
+        system = SystemMessage(
+            content=(
+                "You are a research assistant for trip planning.\n"
+                "Rules:\n"
+                "- You have tool outputs in context\n"
+                "- Do NOT call tools now\n"
+                "- Output a short bullet fact list (transit/food/areas/day trips)"
+            )
+        )
+        user = HumanMessage(content=f"Write research notes for {city}.")
 
-    msg = model.invoke([system, context, *state["messages"]])
+    msg = model.invoke([system, user, *messages])
     tool_calls = getattr(msg, "tool_calls", None)
     print("tool_calls:", tool_calls)
+    if isinstance(msg.content, str) and msg.content:
+        print("researcher content (first 200 chars):", msg.content[:200])
 
     return {
         "messages": [msg],
@@ -341,55 +378,103 @@ def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
     }
 
 
-def budgeter_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
+def budgeter_agent_node(
+    state: PlannerState, *, mode: str, min_spend_ratio: float
+) -> dict[str, Any]:
     _print_header("[node] budgeter_agent")
 
     city = state["city"]
     budget_usd = state["budget_usd"]
     constraints = state["constraints"]
+    messages = state["messages"]
 
-    model = ChatCodexOAuth(model="gpt-5.2-codex", system_prompt_mode=mode).bind_tools(
-        TOOLS
-    )
+    # Two-phase tool loop:
+    # 1) Force arithmetic tool usage to compute totals
+    # 2) After tool results are present, output final JSON without tools
+    has_tool_results = _has_recent_tool_results(messages)
 
-    system = SystemMessage(
-        content=(
-            "You are a budgeter. Create a concrete budget breakdown that fits under the total.\n"
-            "Rules:\n"
-            "- Use calc for arithmetic\n"
-            "- Use city_info if you need baseline costs\n"
-            "- Output JSON with keys: total_usd, items (list of {label, cost_usd})"
+    if not has_tool_results:
+        model = ChatCodexOAuth(
+            model="gpt-5.2-codex", system_prompt_mode=mode
+        ).bind_tools(
+            TOOLS,
+            tool_choice="any",
         )
-    )
-
-    user = HumanMessage(
-        content=(
-            f"City: {city}\n"
-            f"Budget cap: ${budget_usd} USD\n"
-            f"Constraints: {constraints}\n\n"
-            "Return only JSON."
+        system = SystemMessage(
+            content=(
+                "You are a budgeter.\n"
+                "Rules:\n"
+                "- You MUST call tools in this step\n"
+                "- Call calc(...) to propose a realistic total near the budget cap\n"
+                "- Do not output the final JSON yet"
+            )
         )
-    )
+        user = HumanMessage(
+            content=(
+                f"Budget cap: ${budget_usd} USD\n"
+                f"City: {city}\n"
+                "Call calc to compute a candidate total between 85% and 100% of the cap."
+            )
+        )
+    else:
+        model = ChatCodexOAuth(
+            model="gpt-5.2-codex", system_prompt_mode=mode
+        ).bind_tools(TOOLS)
+        system = SystemMessage(
+            content=(
+                "You are a budgeter. Create a concrete budget breakdown that fits under the total.\n"
+                "Rules:\n"
+                "- You have tool outputs in context\n"
+                "- Do NOT call tools now\n"
+                "- Output JSON with keys: total_usd, items (list of {label, cost_usd})\n"
+                "- Total must be close to the cap: at least {min_ratio}% of the cap"
+            ).format(min_ratio=int(min_spend_ratio * 100))
+        )
+        user = HumanMessage(
+            content=(
+                f"City: {city}\n"
+                f"Budget cap: ${budget_usd} USD\n"
+                f"Constraints: {constraints}\n\n"
+                "Return only JSON."
+            )
+        )
 
-    msg = model.invoke([system, user, *state["messages"]])
+    msg = model.invoke([system, user, *messages])
     tool_calls = getattr(msg, "tool_calls", None)
     print("tool_calls:", tool_calls)
+    if isinstance(msg.content, str) and msg.content:
+        print("budgeter content (first 200 chars):", msg.content[:200])
 
     # If the model already produced JSON, parse it; otherwise we keep the message and
     # let the supervisor decide what to do next.
-    budget: dict[str, Any] | None = None
+    parsed_budget: dict[str, Any] | None = None
     if isinstance(msg.content, str) and msg.content.strip().startswith("{"):
         try:
-            budget = BudgetBreakdown.model_validate_json(msg.content).model_dump()
+            parsed_budget = BudgetBreakdown.model_validate_json(
+                msg.content
+            ).model_dump()
         except Exception as exc:
             print("budget parse failed:", exc)
+
+    # Enforce a "near cap" constraint to push tool+instruction adherence.
+    if parsed_budget is not None:
+        total = parsed_budget.get("total_usd")
+        if isinstance(total, (int, float)):
+            if float(total) < float(budget_usd) * float(min_spend_ratio):
+                print(
+                    "budget too low; forcing retry. total=",
+                    total,
+                    "min_required=",
+                    float(budget_usd) * float(min_spend_ratio),
+                )
+                parsed_budget = None
 
     update: dict[str, Any] = {
         "messages": [msg],
         "tool_owner": "budgeter" if tool_calls else None,
     }
-    if budget is not None:
-        update["budget"] = budget
+    if parsed_budget is not None:
+        update["budget"] = parsed_budget
     return update
 
 
@@ -493,12 +578,19 @@ def main() -> None:
         help="ChatCodexOAuth system_prompt_mode",
     )
     parser.add_argument("--max-steps", type=int, default=8)
+    parser.add_argument(
+        "--min-spend-ratio",
+        type=float,
+        default=0.85,
+        help="Require budget total to be near cap (e.g. 0.85 => >=85% of cap)",
+    )
     args = parser.parse_args()
 
     city = str(args.city)
     budget_usd = float(args.budget)
     mode = str(args.mode)
     max_steps = int(args.max_steps)
+    min_spend_ratio = float(args.min_spend_ratio)
 
     constraints = [
         "2 days",
@@ -517,7 +609,14 @@ def main() -> None:
     )
     graph.add_node("planner", lambda state: planner_node(state, mode=mode))
     graph.add_node("researcher", lambda state: researcher_agent_node(state, mode=mode))
-    graph.add_node("budgeter", lambda state: budgeter_agent_node(state, mode=mode))
+    graph.add_node(
+        "budgeter",
+        lambda state: budgeter_agent_node(
+            state,
+            mode=mode,
+            min_spend_ratio=min_spend_ratio,
+        ),
+    )
     graph.add_node("writer", lambda state: writer_node(state, mode=mode))
     graph.add_node("tools", tool_node)
     graph.add_node("capture_research", capture_research_notes)
