@@ -44,6 +44,49 @@ from langchain_core.tools import tool
 
 from langchain_codex_oauth import ChatCodexOAuth
 
+
+def _get_llm(
+    *,
+    provider: str,
+    openai_model: str,
+    mode: str,
+    temperature: float | None,
+    bind_tools: bool,
+    tool_choice: str | None,
+):
+    if provider == "codex":
+        model = ChatCodexOAuth(
+            model="gpt-5.2-codex",
+            system_prompt_mode=mode,  # type: ignore[arg-type]
+            temperature=temperature,
+        )
+    elif provider == "openai":
+        try:
+            from langchain_openai import ChatOpenAI  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "provider=openai requires `pip install langchain-openai`"
+            ) from exc
+
+        model = ChatOpenAI(
+            model=openai_model,
+            temperature=temperature,
+        )
+    else:
+        raise ValueError("provider must be 'codex' or 'openai'")
+
+    if bind_tools:
+        tc = tool_choice
+        # LangChain's ChatOpenAI prefers `required`; Codex adapter supports `any`.
+        if provider == "openai" and tc == "any":
+            tc = "required"
+        model = (
+            model.bind_tools(TOOLS, tool_choice=tc) if tc else model.bind_tools(TOOLS)
+        )
+
+    return model
+
+
 # Optional dependency (installed in a separate venv).
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -220,7 +263,13 @@ def _print_header(title: str) -> None:
 
 
 def supervisor_node(
-    state: PlannerState, *, mode: str, max_steps: int
+    state: PlannerState,
+    *,
+    provider: str,
+    openai_model: str,
+    temperature: float | None,
+    mode: str,
+    max_steps: int,
 ) -> dict[str, Any]:
     _print_header("[node] supervisor")
 
@@ -238,8 +287,13 @@ def supervisor_node(
     }
     print("state summary:", summary)
 
-    router = ChatCodexOAuth(
-        model="gpt-5.2-codex", system_prompt_mode=mode
+    router = _get_llm(
+        provider=provider,
+        openai_model=openai_model,
+        mode=mode,
+        temperature=temperature,
+        bind_tools=False,
+        tool_choice=None,
     ).with_structured_output(RouteDecision)
 
     system = SystemMessage(
@@ -290,14 +344,28 @@ def supervisor_node(
     }
 
 
-def planner_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
+def planner_node(
+    state: PlannerState,
+    *,
+    provider: str,
+    openai_model: str,
+    temperature: float | None,
+    mode: str,
+) -> dict[str, Any]:
     _print_header("[node] planner")
 
     city = state["city"]
     budget_usd = state["budget_usd"]
     constraints = state["constraints"]
 
-    planner = ChatCodexOAuth(model="gpt-5.2-codex", system_prompt_mode=mode)
+    planner = _get_llm(
+        provider=provider,
+        openai_model=openai_model,
+        mode=mode,
+        temperature=temperature,
+        bind_tools=False,
+        tool_choice=None,
+    )
 
     system = SystemMessage(
         content=(
@@ -324,7 +392,14 @@ def planner_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
     return {"plan_outline": str(msg.content), "messages": [msg]}
 
 
-def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
+def researcher_agent_node(
+    state: PlannerState,
+    *,
+    provider: str,
+    openai_model: str,
+    temperature: float | None,
+    mode: str,
+) -> dict[str, Any]:
     _print_header("[node] researcher_agent")
 
     city = state["city"]
@@ -336,10 +411,12 @@ def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
     post_tools = _post_tools_for_owner(state, "researcher")
 
     if not post_tools:
-        model = ChatCodexOAuth(
-            model="gpt-5.2-codex", system_prompt_mode=mode
-        ).bind_tools(
-            TOOLS,
+        model = _get_llm(
+            provider=provider,
+            openai_model=openai_model,
+            mode=mode,
+            temperature=temperature,
+            bind_tools=True,
             tool_choice="any",
         )
         system = SystemMessage(
@@ -362,9 +439,14 @@ def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
             )
         )
     else:
-        model = ChatCodexOAuth(
-            model="gpt-5.2-codex", system_prompt_mode=mode
-        ).bind_tools(TOOLS)
+        model = _get_llm(
+            provider=provider,
+            openai_model=openai_model,
+            mode=mode,
+            temperature=temperature,
+            bind_tools=True,
+            tool_choice=None,
+        )
         system = SystemMessage(
             content=(
                 "You are a research assistant for trip planning.\n"
@@ -389,7 +471,13 @@ def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
 
 
 def budgeter_agent_node(
-    state: PlannerState, *, mode: str, min_spend_ratio: float
+    state: PlannerState,
+    *,
+    provider: str,
+    openai_model: str,
+    temperature: float | None,
+    mode: str,
+    min_spend_ratio: float,
 ) -> dict[str, Any]:
     _print_header("[node] budgeter_agent")
 
@@ -404,10 +492,12 @@ def budgeter_agent_node(
     post_tools = _post_tools_for_owner(state, "budgeter")
 
     if not post_tools:
-        model = ChatCodexOAuth(
-            model="gpt-5.2-codex", system_prompt_mode=mode
-        ).bind_tools(
-            TOOLS,
+        model = _get_llm(
+            provider=provider,
+            openai_model=openai_model,
+            mode=mode,
+            temperature=temperature,
+            bind_tools=True,
             tool_choice="any",
         )
         system = SystemMessage(
@@ -429,9 +519,14 @@ def budgeter_agent_node(
             )
         )
     else:
-        model = ChatCodexOAuth(
-            model="gpt-5.2-codex", system_prompt_mode=mode
-        ).bind_tools(TOOLS)
+        model = _get_llm(
+            provider=provider,
+            openai_model=openai_model,
+            mode=mode,
+            temperature=temperature,
+            bind_tools=True,
+            tool_choice=None,
+        )
         min_ratio_pct = int(min_spend_ratio * 100)
         system = SystemMessage(
             content=(
@@ -491,14 +586,26 @@ def budgeter_agent_node(
     return update
 
 
-def writer_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
+def writer_node(
+    state: PlannerState,
+    *,
+    provider: str,
+    openai_model: str,
+    temperature: float | None,
+    mode: str,
+) -> dict[str, Any]:
     _print_header("[node] writer")
 
     city = state["city"]
     constraints = state["constraints"]
 
-    writer = ChatCodexOAuth(
-        model="gpt-5.2-codex", system_prompt_mode=mode
+    writer = _get_llm(
+        provider=provider,
+        openai_model=openai_model,
+        mode=mode,
+        temperature=temperature,
+        bind_tools=False,
+        tool_choice=None,
     ).with_structured_output(TripPlan, include_raw=True)
 
     system = SystemMessage(
@@ -590,6 +697,23 @@ def main() -> None:
         default="strict",
         help="ChatCodexOAuth system_prompt_mode",
     )
+    parser.add_argument(
+        "--provider",
+        choices=["codex", "openai"],
+        default="codex",
+        help="Model provider to run this graph with",
+    )
+    parser.add_argument(
+        "--openai-model",
+        default="gpt-4o-mini",
+        help="Only used when --provider openai",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.2,
+        help="Generation temperature (shared across providers)",
+    )
     parser.add_argument("--max-steps", type=int, default=8)
     parser.add_argument(
         "--min-spend-ratio",
@@ -598,6 +722,10 @@ def main() -> None:
         help="Require budget total to be near cap (e.g. 0.85 => >=85% of cap)",
     )
     args = parser.parse_args()
+
+    provider = str(args.provider)
+    openai_model = str(args.openai_model)
+    temperature = float(args.temperature)
 
     city = str(args.city)
     budget_usd = float(args.budget)
@@ -618,19 +746,56 @@ def main() -> None:
     graph: StateGraph[PlannerState] = StateGraph(PlannerState)
     graph.add_node(
         "supervisor",
-        lambda state: supervisor_node(state, mode=mode, max_steps=max_steps),
+        lambda state: supervisor_node(
+            state,
+            provider=provider,
+            openai_model=openai_model,
+            temperature=temperature,
+            mode=mode,
+            max_steps=max_steps,
+        ),
     )
-    graph.add_node("planner", lambda state: planner_node(state, mode=mode))
-    graph.add_node("researcher", lambda state: researcher_agent_node(state, mode=mode))
+    graph.add_node(
+        "planner",
+        lambda state: planner_node(
+            state,
+            provider=provider,
+            openai_model=openai_model,
+            temperature=temperature,
+            mode=mode,
+        ),
+    )
+    graph.add_node(
+        "researcher",
+        lambda state: researcher_agent_node(
+            state,
+            provider=provider,
+            openai_model=openai_model,
+            temperature=temperature,
+            mode=mode,
+        ),
+    )
     graph.add_node(
         "budgeter",
         lambda state: budgeter_agent_node(
             state,
+            provider=provider,
+            openai_model=openai_model,
+            temperature=temperature,
             mode=mode,
             min_spend_ratio=min_spend_ratio,
         ),
     )
-    graph.add_node("writer", lambda state: writer_node(state, mode=mode))
+    graph.add_node(
+        "writer",
+        lambda state: writer_node(
+            state,
+            provider=provider,
+            openai_model=openai_model,
+            temperature=temperature,
+            mode=mode,
+        ),
+    )
     graph.add_node("tools", tool_node)
     graph.add_node("capture_research", capture_research_notes)
 
@@ -700,7 +865,11 @@ def main() -> None:
     }
 
     _print_header("RUN")
+    print("provider:", provider)
     print("mode:", mode)
+    print("temperature:", temperature)
+    if provider == "openai":
+        print("openai_model:", openai_model)
     print("city:", city)
     print("budget_usd:", budget_usd)
 
