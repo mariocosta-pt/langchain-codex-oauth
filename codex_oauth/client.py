@@ -115,6 +115,7 @@ class CodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
+        extra_instructions: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         request_body: dict[str, Any] = {
             "model": normalize_model(model),
@@ -144,9 +145,16 @@ class CodexClient:
         url = f"{self._base_url}{CODEX_RESPONSES_PATH}"
         with httpx.Client(timeout=self._timeout_s) as http:
             creds = self._load_valid_credentials(http)
-            request_body["instructions"] = get_codex_instructions(
+            base_instructions = get_codex_instructions(
                 http, model=request_body["model"]
             )
+            instructions_extra_removed = False
+            if extra_instructions:
+                request_body["instructions"] = (
+                    f"{base_instructions}\n\n{extra_instructions}".strip()
+                )
+            else:
+                request_body["instructions"] = base_instructions
 
             tool_choice_removed = False
             temperature_removed = False
@@ -167,6 +175,16 @@ class CodexClient:
                                 pass
 
                             err = self._to_api_error(response)
+
+                            if (
+                                not instructions_extra_removed
+                                and extra_instructions
+                                and err.status_code == 400
+                                and "instruction" in str(err).lower()
+                            ):
+                                request_body["instructions"] = base_instructions
+                                instructions_extra_removed = True
+                                continue
 
                             if (
                                 not tool_choice_removed
@@ -236,6 +254,7 @@ class CodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
+        extra_instructions: str | None = None,
     ) -> CompletionResult:
         last_response: object | None = None
         for event in self.stream_events(
@@ -249,6 +268,7 @@ class CodexClient:
             reasoning_summary=reasoning_summary,
             text_verbosity=text_verbosity,
             include=include,
+            extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):
                 last_response = event.get("response")
@@ -272,6 +292,7 @@ class CodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
+        extra_instructions: str | None = None,
     ) -> ParsedAssistantMessage:
         return self.complete_with_response(
             input_items=input_items,
@@ -284,6 +305,7 @@ class CodexClient:
             reasoning_summary=reasoning_summary,
             text_verbosity=text_verbosity,
             include=include,
+            extra_instructions=extra_instructions,
         ).parsed
 
     # Backwards-compatible helpers for plain chat.
@@ -445,6 +467,7 @@ class AsyncCodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
+        extra_instructions: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         request_body: dict[str, Any] = {
             "model": normalize_model(model),
@@ -474,9 +497,16 @@ class AsyncCodexClient:
         url = f"{self._base_url}{CODEX_RESPONSES_PATH}"
         async with httpx.AsyncClient(timeout=self._timeout_s) as http:
             creds = await self._load_valid_credentials(http)
-            request_body["instructions"] = await aget_codex_instructions(
+            base_instructions = await aget_codex_instructions(
                 http, model=request_body["model"]
             )
+            instructions_extra_removed = False
+            if extra_instructions:
+                request_body["instructions"] = (
+                    f"{base_instructions}\n\n{extra_instructions}".strip()
+                )
+            else:
+                request_body["instructions"] = base_instructions
 
             tool_choice_removed = False
             temperature_removed = False
@@ -497,6 +527,16 @@ class AsyncCodexClient:
                                 pass
 
                             err = CodexClient._to_api_error(response)
+
+                            if (
+                                not instructions_extra_removed
+                                and extra_instructions
+                                and err.status_code == 400
+                                and "instruction" in str(err).lower()
+                            ):
+                                request_body["instructions"] = base_instructions
+                                instructions_extra_removed = True
+                                continue
 
                             if (
                                 not tool_choice_removed
@@ -567,6 +607,7 @@ class AsyncCodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
+        extra_instructions: str | None = None,
     ) -> CompletionResult:
         last_response: object | None = None
         async for event in self.astream_events(
@@ -580,6 +621,7 @@ class AsyncCodexClient:
             reasoning_summary=reasoning_summary,
             text_verbosity=text_verbosity,
             include=include,
+            extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):
                 last_response = event.get("response")
@@ -603,6 +645,7 @@ class AsyncCodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
+        extra_instructions: str | None = None,
     ) -> ParsedAssistantMessage:
         return (
             await self.acomplete_with_response(
@@ -616,5 +659,6 @@ class AsyncCodexClient:
                 reasoning_summary=reasoning_summary,
                 text_verbosity=text_verbosity,
                 include=include,
+                extra_instructions=extra_instructions,
             )
         ).parsed

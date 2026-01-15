@@ -4,7 +4,7 @@ Prereq (one-time login):
   `langchain-codex-oauth auth login`
 
 Then run:
-  `python examples/chatopenai_compatibility.py`
+  `python examples/langchain/chatopenai_compatibility.py`
 
 This demonstrates compatibility features designed to make switching to ChatOpenAI
 in production as painless as possible.
@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from langchain_core.messages import HumanMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool

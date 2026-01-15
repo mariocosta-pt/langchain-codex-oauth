@@ -4,7 +4,7 @@ Prereq (one-time login):
   `langchain-codex-oauth auth login`
 
 Then run:
-  `python examples/tools.py`
+  `python examples/langchain/tools.py`
 
 This demonstrates the same basic loop used by LangGraph agents:
 1) Model requests tools via `AIMessage.tool_calls`
@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool

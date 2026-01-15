@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator, Iterator, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from codex_oauth.client import CODEX_BASE_URL, AsyncCodexClient, CodexClient
 from codex_oauth.env import get_env_float, get_env_int, get_env_str
@@ -147,11 +147,69 @@ def _tool_call_chunk(
     }
 
 
-def _to_input_items(messages: list[BaseMessage]) -> list[InputItem]:
-    items: list[InputItem] = []
+SystemPromptMode = Literal["strict", "default", "disabled"]
 
+
+def _extract_system_texts(messages: list[BaseMessage]) -> list[str]:
+    texts: list[str] = []
     for message in messages:
         if message.type in {"system", "developer"}:
+            text = str(message.content)
+            if text:
+                texts.append(text)
+    return texts
+
+
+def _format_system_prompt_strict(texts: list[str]) -> str:
+    joined = "\n\n".join(t for t in texts if t)
+    return f"System instructions (highest priority):\n{joined}".strip()
+
+
+def _build_extra_instructions(texts: list[str]) -> str | None:
+    if not texts:
+        return None
+
+    joined = "\n\n".join(t for t in texts if t)
+    if not joined:
+        return None
+
+    max_chars = 4000
+    if len(joined) > max_chars:
+        joined = joined[:max_chars].rstrip() + "..."
+
+    return (
+        "### Conversation system prompt\n"
+        "Treat the following system instructions as highest priority.\n\n"
+        f"{joined}\n\n"
+        "### End conversation system prompt"
+    )
+
+
+def _to_input_items(
+    messages: list[BaseMessage], *, system_prompt_mode: SystemPromptMode = "default"
+) -> list[InputItem]:
+    items: list[InputItem] = []
+
+    mode = system_prompt_mode
+
+    if mode == "strict":
+        system_texts = _extract_system_texts(messages)
+        if system_texts:
+            items.append(
+                message_item("developer", _format_system_prompt_strict(system_texts))
+            )
+        messages_to_process = [
+            m for m in messages if m.type not in {"system", "developer"}
+        ]
+    elif mode == "disabled":
+        messages_to_process = [
+            m for m in messages if m.type not in {"system", "developer"}
+        ]
+    else:
+        messages_to_process = list(messages)
+
+    for message in messages_to_process:
+        if mode == "default" and message.type in {"system", "developer"}:
             items.append(message_item("developer", str(message.content)))
             continue
 
@@ -204,6 +262,9 @@ class ChatCodexOAuth(BaseChatModel):
     max_retries: int | None = None
     base_url: str | None = None
 
+    # Drift mitigation; default to strict for reliability.
+    system_prompt_mode: SystemPromptMode = "strict"
+
     def __init__(
         self,
         *,
@@ -218,6 +279,7 @@ class ChatCodexOAuth(BaseChatModel):
         base_url: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        system_prompt_mode: SystemPromptMode = "strict",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -239,6 +301,8 @@ class ChatCodexOAuth(BaseChatModel):
 
         self.temperature = temperature
         self.max_tokens = max_tokens
+
+        self.system_prompt_mode = system_prompt_mode
 
         store = auth_store or AuthStore()
 
@@ -283,6 +347,7 @@ class ChatCodexOAuth(BaseChatModel):
             "reasoning_effort": self.reasoning_effort,
             "reasoning_summary": self.reasoning_summary,
             "text_verbosity": self.text_verbosity,
+            "system_prompt_mode": self.system_prompt_mode,
         }
 
     def bind_tools(
@@ -305,8 +370,21 @@ class ChatCodexOAuth(BaseChatModel):
         temperature: float | None,
         max_output_tokens: int | None,
     ) -> CompletionResult:
+        system_texts = (
+            _extract_system_texts(messages)
+            if self.system_prompt_mode == "strict"
+            else []
+        )
+        extra_instructions = (
+            _build_extra_instructions(system_texts)
+            if self.system_prompt_mode == "strict"
+            else None
+        )
+
         return self._client.complete_with_response(
-            input_items=_to_input_items(messages),
+            input_items=_to_input_items(
+                messages, system_prompt_mode=self.system_prompt_mode
+            ),
             model=self.model,
             tools=tools,
             tool_choice=tool_choice,
@@ -316,6 +394,7 @@ class ChatCodexOAuth(BaseChatModel):
             reasoning_summary=self.reasoning_summary,
             text_verbosity=self.text_verbosity,
             include=self.include,
+            extra_instructions=extra_instructions,
         )
 
     def _complete(
@@ -385,7 +464,20 @@ class ChatCodexOAuth(BaseChatModel):
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
 
-        input_items = _to_input_items(messages)
+        system_texts = (
+            _extract_system_texts(messages)
+            if self.system_prompt_mode == "strict"
+            else []
+        )
+        extra_instructions = (
+            _build_extra_instructions(system_texts)
+            if self.system_prompt_mode == "strict"
+            else None
+        )
+
+        input_items = _to_input_items(
+            messages, system_prompt_mode=self.system_prompt_mode
+        )
 
         stop_sequences = [s for s in (stop or []) if s]
         max_stop_len = max((len(s) for s in stop_sequences), default=0)
@@ -406,6 +498,7 @@ class ChatCodexOAuth(BaseChatModel):
             reasoning_summary=self.reasoning_summary,
             text_verbosity=self.text_verbosity,
             include=self.include,
+            extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):
                 if not stopped and buffer:
@@ -522,8 +615,21 @@ class ChatCodexOAuth(BaseChatModel):
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
 
+        system_texts = (
+            _extract_system_texts(messages)
+            if self.system_prompt_mode == "strict"
+            else []
+        )
+        extra_instructions = (
+            _build_extra_instructions(system_texts)
+            if self.system_prompt_mode == "strict"
+            else None
+        )
+
         result = await self._async_client.acomplete_with_response(
-            input_items=_to_input_items(messages),
+            input_items=_to_input_items(
+                messages, system_prompt_mode=self.system_prompt_mode
+            ),
             model=self.model,
             tools=tools if isinstance(tools, list) else None,
             tool_choice=tool_choice,
@@ -533,6 +639,7 @@ class ChatCodexOAuth(BaseChatModel):
             reasoning_summary=self.reasoning_summary,
             text_verbosity=self.text_verbosity,
             include=self.include,
+            extra_instructions=extra_instructions,
         )
 
         parsed = result.parsed
@@ -564,7 +671,20 @@ class ChatCodexOAuth(BaseChatModel):
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
 
-        input_items = _to_input_items(messages)
+        system_texts = (
+            _extract_system_texts(messages)
+            if self.system_prompt_mode == "strict"
+            else []
+        )
+        extra_instructions = (
+            _build_extra_instructions(system_texts)
+            if self.system_prompt_mode == "strict"
+            else None
+        )
+
+        input_items = _to_input_items(
+            messages, system_prompt_mode=self.system_prompt_mode
+        )
 
         stop_sequences = [s for s in (stop or []) if s]
         max_stop_len = max((len(s) for s in stop_sequences), default=0)
@@ -585,6 +705,7 @@ class ChatCodexOAuth(BaseChatModel):
             reasoning_summary=self.reasoning_summary,
             text_verbosity=self.text_verbosity,
             include=self.include,
+            extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):
                 if not stopped and buffer:

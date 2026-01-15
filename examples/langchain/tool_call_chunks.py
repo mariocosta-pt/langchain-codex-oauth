@@ -4,7 +4,7 @@ Prereq (one-time login):
   `langchain-codex-oauth auth login`
 
 Then run:
-  `python examples/tool_call_chunks.py`
+  `python examples/langchain/tool_call_chunks.py`
 
 Depending on the backend/model, tool args may stream in chunks or may arrive as a
 single final tool call.
@@ -16,7 +16,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from pydantic import BaseModel
 

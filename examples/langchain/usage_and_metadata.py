@@ -4,7 +4,7 @@ Prereq (one-time login):
   `langchain-codex-oauth auth login`
 
 Then run:
-  `python examples/usage_and_metadata.py`
+  `python examples/langchain/usage_and_metadata.py`
 
 Note: usage fields are best-effort; depending on backend/model, usage may be
 missing.
@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from langchain_core.messages import HumanMessage
 

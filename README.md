@@ -50,15 +50,18 @@ for chunk in model.stream(messages):
     print(chunk.content, end="", flush=True)
 ```
 
-Or run the examples:
+Or run the examples (see `examples/README.md` for details):
 ```bash
-python examples/hello.py
-python examples/tools.py
-python examples/async_hello.py
-python examples/chatopenai_compatibility.py
-python examples/flags_and_params.py
-python examples/usage_and_metadata.py
-python examples/tool_call_chunks.py
+python examples/langchain/hello.py
+python examples/langchain/tools.py
+python examples/langchain/async_hello.py
+python examples/langchain/chatopenai_compatibility.py
+python examples/langchain/flags_and_params.py
+python examples/langchain/usage_and_metadata.py
+python examples/langchain/tool_call_chunks.py
+
+# Optional (requires installing langgraph in a separate venv)
+python examples/langgraph/system_prompt_drift.py --mode strict
 ```
 
 ## Configuration knobs (ChatOpenAI-like)
@@ -66,6 +69,9 @@ python examples/tool_call_chunks.py
 - `timeout` (seconds) and `max_retries`
 - `temperature` and `max_tokens` (best-effort passthrough)
 - `stop=[...]` for `.invoke/.stream/.ainvoke/.astream` (best-effort)
+
+Additional Codex-specific knob:
+- `system_prompt_mode` (`"strict"` default, `"default"`, `"disabled"`) to reduce system-prompt drift on the consumer backend.
 
 ## Notes
 - The Codex backend requires validated `instructions`. By default the library uses cached prompts, attempts GitHub fetch if missing, and falls back to bundled prompts (override with `LANGCHAIN_CODEX_OAUTH_INSTRUCTIONS_MODE`).

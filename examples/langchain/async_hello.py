@@ -4,7 +4,7 @@ Prereq (one-time login):
   `langchain-codex-oauth auth login`
 
 Then run:
-  `python examples/async_hello.py`
+  `python examples/langchain/async_hello.py`
 
 This uses native async `.ainvoke()` and `.astream()`.
 """
@@ -15,7 +15,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from langchain_core.messages import HumanMessage, SystemMessage
 

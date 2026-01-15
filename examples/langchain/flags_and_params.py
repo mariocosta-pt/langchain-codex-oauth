@@ -4,7 +4,7 @@ Prereq (one-time login):
   `langchain-codex-oauth auth login`
 
 Then run:
-  `python examples/flags_and_params.py`
+  `python examples/langchain/flags_and_params.py`
 
 This demonstrates ChatOpenAI-like knobs supported by ChatCodexOAuth.
 Note: some generation knobs are best-effort passthroughs; if the Codex backend
@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from langchain_core.messages import HumanMessage
 
