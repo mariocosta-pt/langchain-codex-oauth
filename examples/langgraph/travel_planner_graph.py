@@ -420,6 +420,7 @@ def budgeter_agent_node(
         model = ChatCodexOAuth(
             model="gpt-5.2-codex", system_prompt_mode=mode
         ).bind_tools(TOOLS)
+        min_ratio_pct = int(min_spend_ratio * 100)
         system = SystemMessage(
             content=(
                 "You are a budgeter. Create a concrete budget breakdown that fits under the total.\n"
@@ -427,8 +428,8 @@ def budgeter_agent_node(
                 "- You have tool outputs in context\n"
                 "- Do NOT call tools now\n"
                 "- Output JSON with keys: total_usd, items (list of {label, cost_usd})\n"
-                "- Total must be close to the cap: at least {min_ratio}% of the cap"
-            ).format(min_ratio=int(min_spend_ratio * 100))
+                f"- Total must be close to the cap: at least {min_ratio_pct}% of the cap"
+            )
         )
         user = HumanMessage(
             content=(
