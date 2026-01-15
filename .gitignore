@@ -34,3 +34,6 @@ README-dev.md
 # If you ever point auth storage into repo
 .langchain-codex-oauth/
 
+# Local example outputs
+examples/output/
+

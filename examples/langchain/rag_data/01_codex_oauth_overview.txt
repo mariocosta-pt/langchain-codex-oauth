@@ -1,0 +1,8 @@
+langchain-codex-oauth overview
+
+This project lets you use ChatGPT Plus/Pro Codex models via OAuth inside LangChain as a chat model.
+
+Key points:
+- The chat backend is the ChatGPT consumer Codex endpoint.
+- The adapter tries to behave similarly to LangChain's ChatOpenAI.
+- You must authenticate first using the CLI: langchain-codex-oauth auth login.

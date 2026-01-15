@@ -1,0 +1,9 @@
+Tool calling and structured output
+
+LangChain tools:
+- In agent workflows, the model produces tool calls and the host application executes them.
+
+Structured output:
+- With structured output, the model is guided to return JSON that matches a schema.
+
+This project supports tool calling and structured output patterns to better match ChatOpenAI behavior.

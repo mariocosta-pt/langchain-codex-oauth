@@ -1,0 +1,8 @@
+RAG basics
+
+Retrieval-Augmented Generation (RAG) works by retrieving relevant documents using embeddings and then giving the retrieved text to an LLM.
+
+Important rule:
+- The embedding model used to embed documents must match the embedding model used to embed queries.
+
+The LLM used to answer the question can be different from the embedding model.

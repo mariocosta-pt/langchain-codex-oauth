@@ -21,6 +21,7 @@ python examples/langchain/chatopenai_compatibility.py
 python examples/langchain/flags_and_params.py
 python examples/langchain/usage_and_metadata.py
 python examples/langchain/tool_call_chunks.py
+python examples/langchain/rag_chroma_ab.py
 ```
 
 If you are running from a fresh environment:
@@ -34,6 +35,35 @@ environment does not already have it:
 
 ```bash
 python -m pip install pydantic
+```
+
+## `examples/langchain/` — RAG (optional extra deps)
+This RAG example uses Chroma as a local vector store and supports an A/B matrix:
+- LLM: `--llm codex|openai`
+- Embedder: `--embedder ollama|openai`
+
+It persists the DB under `examples/output/` (gitignored).
+
+Install extra deps in your example venv:
+
+```bash
+python -m pip install langchain-chroma chromadb
+python -m pip install langchain-ollama
+# Optional (for OpenAI embeddings or ChatOpenAI)
+python -m pip install langchain-openai
+```
+
+Run (common combos):
+
+```bash
+# "Free-ish" dev flow: local embeddings + Codex via OAuth
+python examples/langchain/rag_chroma_ab.py --llm codex --embedder ollama --ollama-embed-model mxbai-embed-large:latest
+
+# Mixed flow: OpenAI embeddings + Codex via OAuth
+python examples/langchain/rag_chroma_ab.py --llm codex --embedder openai --openai-embedding-model text-embedding-3-small
+
+# Prod-like flow: OpenAI embeddings + ChatOpenAI
+python examples/langchain/rag_chroma_ab.py --llm openai --embedder openai --openai-chat-model gpt-4o-mini
 ```
 
 ## `examples/langgraph/` (optional)

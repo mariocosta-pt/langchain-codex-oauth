@@ -1,0 +1,8 @@
+Ollama embeddings
+
+Ollama can run embedding models locally.
+
+Example model:
+- mxbai-embed-large:latest
+
+If you use Ollama embeddings locally and ChatCodexOAuth for generation, you can prototype RAG flows without using OpenAI API embeddings.

@@ -1,0 +1,5 @@
+Embedding mismatch warning
+
+If you embed your documents with one embedding model (e.g., Ollama mxbai-embed-large) but embed the query with a different model (e.g., OpenAI text-embedding-3-small), retrieval quality will degrade or the vector database may error due to dimension mismatch.
+
+To switch embedding models, you typically need to re-embed and rebuild your vector store.
