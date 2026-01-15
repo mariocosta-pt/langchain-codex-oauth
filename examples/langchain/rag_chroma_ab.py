@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,10 +38,11 @@ from typing import Any
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
 from langchain_codex_oauth import ChatCodexOAuth
 
-
-ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(__file__).resolve().parent / "rag_data"
 DEFAULT_OUTPUT_DIR = ROOT / "examples" / "output"
 
