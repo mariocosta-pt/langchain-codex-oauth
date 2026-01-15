@@ -28,11 +28,6 @@ import sys
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from pydantic import BaseModel, Field
-from typing_extensions import TypedDict
-
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -42,7 +37,14 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 
-from langchain_codex_oauth import ChatCodexOAuth
+# Optional dependency (installed in a separate venv).
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
+from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def _get_llm(
@@ -55,6 +57,8 @@ def _get_llm(
     tool_choice: str | None,
 ):
     if provider == "codex":
+        from langchain_codex_oauth import ChatCodexOAuth
+
         model = ChatCodexOAuth(
             model="gpt-5.2-codex",
             system_prompt_mode=mode,  # type: ignore[arg-type]
@@ -85,12 +89,6 @@ def _get_llm(
         )
 
     return model
-
-
-# Optional dependency (installed in a separate venv).
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
 
 
 # -----------------------------
@@ -459,7 +457,8 @@ def researcher_agent_node(
             content=(
                 f"City: {city}\n"
                 "Pick a plausible food_per_day (25-60) and transit_per_day (6-12), "
-                "then call calc with '(food_per_day+transit_per_day)*2' using NUMBERS only. "
+                "then call calc with '(food_per_day+transit_per_day)*2' using "
+                "NUMBERS only. "
                 "Example: '(40+10)*2'."
             )
         )
@@ -540,8 +539,9 @@ def budgeter_agent_node(
             content=(
                 f"Budget cap: ${budget_usd} USD\n"
                 f"City: {city}\n"
-                f"Call calc with a numeric expression that yields a total between {min_ratio_pct}% "
-                "and 100% of the cap. Example: '600*0.95'."
+                f"Call calc with a numeric expression that yields a total between "
+                f"{min_ratio_pct}% and 100% of the cap. "
+                "Example: '600*0.95'."
             )
         )
     else:
@@ -556,12 +556,15 @@ def budgeter_agent_node(
         min_ratio_pct = int(min_spend_ratio * 100)
         system = SystemMessage(
             content=(
-                "You are a budgeter. Create a concrete budget breakdown that fits under the total.\n"
+                "You are a budgeter. Create a concrete budget breakdown that fits "
+                "under the total.\n"
                 "Rules:\n"
                 "- You have tool outputs in context\n"
                 "- Do NOT call tools now\n"
-                "- Output JSON with keys: total_usd, items (list of {label, cost_usd})\n"
-                f"- Total must be close to the cap: at least {min_ratio_pct}% of the cap"
+                "- Output JSON with keys: total_usd, items "
+                "(list of {label, cost_usd})\n"
+                f"- Total must be close to the cap: at least {min_ratio_pct}% "
+                "of the cap"
             )
         )
         user = HumanMessage(

@@ -21,16 +21,14 @@ import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from typing_extensions import TypedDict
-
-from langchain_codex_oauth import ChatCodexOAuth
 
 # LangGraph is an optional dependency (installed in a separate venv).
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from typing_extensions import TypedDict
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 class Route(TypedDict):
@@ -53,6 +51,8 @@ WORKER_SYSTEM = "You are a worker. Reply with a short greeting."
 
 
 def router_node(state: GraphState, *, mode: str) -> dict:
+    from langchain_codex_oauth import ChatCodexOAuth
+
     router = ChatCodexOAuth(
         model="gpt-5.2-codex", system_prompt_mode=mode
     ).with_structured_output(Route)
@@ -62,6 +62,8 @@ def router_node(state: GraphState, *, mode: str) -> dict:
 
 
 def worker_node(state: GraphState, *, mode: str) -> dict:
+    from langchain_codex_oauth import ChatCodexOAuth
+
     worker = ChatCodexOAuth(model="gpt-5.2-codex", system_prompt_mode=mode)
     msg = worker.invoke([SystemMessage(content=WORKER_SYSTEM), *state["messages"]])
     return {"messages": [AIMessage(content=msg.content)]}

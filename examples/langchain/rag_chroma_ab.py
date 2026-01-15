@@ -39,9 +39,8 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 
 ROOT = Path(__file__).resolve().parents[2]
+# Allow running this example without `pip install -e .`.
 sys.path.insert(0, str(ROOT))
-
-from langchain_codex_oauth import ChatCodexOAuth
 
 DATA_DIR = Path(__file__).resolve().parent / "rag_data"
 DEFAULT_OUTPUT_DIR = ROOT / "examples" / "output"
@@ -142,6 +141,8 @@ def _get_embeddings(*, embedder: str, ollama_model: str, openai_model: str):
 
 def _get_llm(*, llm: str, openai_model: str, temperature: float):
     if llm == "codex":
+        from langchain_codex_oauth import ChatCodexOAuth
+
         return ChatCodexOAuth(
             model="gpt-5.2-codex",
             system_prompt_mode="strict",
@@ -235,7 +236,10 @@ def main() -> None:
     parser.add_argument(
         "--persist-dir",
         default="",
-        help="Chroma persistence directory (defaults to examples/output/chroma_<embedder>)",
+        help=(
+            "Chroma persistence directory (defaults to "
+            "examples/output/chroma_<embedder>)"
+        ),
     )
 
     parser.add_argument("--temperature", type=float, default=0.2)

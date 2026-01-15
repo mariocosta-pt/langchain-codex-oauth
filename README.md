@@ -18,6 +18,11 @@ This project authenticates locally via OpenAI OAuth (no `OPENAI_API_KEY`) and ta
 - Not for sharing accounts/subscriptions.
 - Not intended for production or multi-user hosting.
 
+## Stability (v1.0)
+- The Python API (`ChatCodexOAuth`, CLI commands, and message/tool wiring) is considered stable.
+- The upstream backend is a ChatGPT consumer endpoint and may change without notice. If that happens, new releases may be required to restore compatibility.
+- Recommendation: pin a minor version in real projects (e.g. `langchain-codex-oauth>=1.0,<1.1`) and upgrade when needed.
+
 ## Requirements
 - Python `>=3.10`
 - Active ChatGPT Plus/Pro subscription with Codex access
@@ -72,6 +77,13 @@ python examples/langgraph/system_prompt_drift.py --mode strict
 
 Additional Codex-specific knob:
 - `system_prompt_mode` (`"strict"` default, `"default"`, `"disabled"`) to reduce system-prompt drift on the consumer backend.
+
+## RAG / Embeddings
+`ChatCodexOAuth` is a chat model, not an embedding model.
+
+- For RAG, you can pair it with local embeddings (e.g. Ollama `mxbai-embed-large`) or OpenAI embeddings.
+- The critical rule is: the embedding model used to index documents must match the embedding model used to embed queries.
+- See `examples/langchain/rag_chroma_ab.py` for an A/B harness (Chroma + persisted local DB).
 
 ## Notes
 - The Codex backend requires validated `instructions`. By default the library uses cached prompts, attempts GitHub fetch if missing, and falls back to bundled prompts (override with `LANGCHAIN_CODEX_OAUTH_INSTRUCTIONS_MODE`).

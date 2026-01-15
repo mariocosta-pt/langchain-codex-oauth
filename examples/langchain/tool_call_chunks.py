@@ -16,14 +16,11 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from pydantic import BaseModel
-
 from langchain_core.messages import HumanMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
+from pydantic import BaseModel
 
-from langchain_codex_oauth import ChatCodexOAuth
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 class Answer(BaseModel):
@@ -31,6 +28,8 @@ class Answer(BaseModel):
 
 
 def main() -> None:
+    from langchain_codex_oauth import ChatCodexOAuth
+
     base = ChatCodexOAuth(model="gpt-5.2-codex")
     tool_schema = convert_to_openai_tool(Answer)
     model = base.bind_tools([tool_schema], tool_choice="any")
