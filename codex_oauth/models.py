@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 Role = Literal["developer", "user", "assistant"]
 
@@ -20,10 +20,18 @@ class InputText(TypedDict):
     text: str
 
 
+class OutputText(TypedDict):
+    type: Literal["output_text"]
+    text: str
+
+
+MessageText = InputText | OutputText
+
+
 class InputMessageItem(TypedDict):
     type: Literal["message"]
     role: Role
-    content: list[InputText]
+    content: list[MessageText]
 
 
 class InputFunctionCallItem(TypedDict):
@@ -43,11 +51,22 @@ InputItem = InputMessageItem | InputFunctionCallItem | InputFunctionCallOutputIt
 
 
 def message_item(role: Role, text: str) -> InputMessageItem:
-    return {
-        "type": "message",
-        "role": role,
-        "content": [{"type": "input_text", "text": text}],
-    }
+    # The consumer Codex backend validates message content types. For history items:
+    # - user/developer messages use `input_text`
+    # - assistant messages use `output_text`
+    if role == "assistant":
+        block: MessageText = {"type": "output_text", "text": text}
+    else:
+        block = {"type": "input_text", "text": text}
+
+    return cast(
+        InputMessageItem,
+        {
+            "type": "message",
+            "role": role,
+            "content": [block],
+        },
+    )
 
 
 def function_call_item(
