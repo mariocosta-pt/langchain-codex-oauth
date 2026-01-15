@@ -184,6 +184,13 @@ def _has_recent_tool_results(messages: list[BaseMessage]) -> bool:
     return any(isinstance(m, ToolMessage) for m in recent)
 
 
+def _post_tools_for_owner(state: PlannerState, owner: str) -> bool:
+    # Only treat ToolMessages as "ours" if we were the tool requester.
+    if state.get("tool_owner") != owner:
+        return False
+    return _has_recent_tool_results(state.get("messages") or [])
+
+
 # -----------------------------
 # LangGraph state
 # -----------------------------
@@ -326,9 +333,9 @@ def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
     # Two-phase tool loop:
     # 1) Force at least one tool call (city_info, ideally calc too)
     # 2) After tool results are present, write research notes without calling tools
-    has_tool_results = _has_recent_tool_results(messages)
+    post_tools = _post_tools_for_owner(state, "researcher")
 
-    if not has_tool_results:
+    if not post_tools:
         model = ChatCodexOAuth(
             model="gpt-5.2-codex", system_prompt_mode=mode
         ).bind_tools(
@@ -342,13 +349,16 @@ def researcher_agent_node(state: PlannerState, *, mode: str) -> dict[str, Any]:
                 "- You MUST call tools in this step\n"
                 "- Call city_info(city) for the target city\n"
                 "- Also call calc(...) to compute a 2-day rough food+transit estimate\n"
+                "- For calc, ONLY use numbers and operators (no variables)\n"
                 "- Do not write the final notes yet"
             )
         )
         user = HumanMessage(
             content=(
                 f"City: {city}\n"
-                "Call tools now. Compute: (food_per_day + transit_per_day) * 2 using calc."
+                "Pick a plausible food_per_day (25-60) and transit_per_day (6-12), "
+                "then call calc with '(food_per_day+transit_per_day)*2' using NUMBERS only. "
+                "Example: '(40+10)*2'."
             )
         )
     else:
@@ -391,9 +401,9 @@ def budgeter_agent_node(
     # Two-phase tool loop:
     # 1) Force arithmetic tool usage to compute totals
     # 2) After tool results are present, output final JSON without tools
-    has_tool_results = _has_recent_tool_results(messages)
+    post_tools = _post_tools_for_owner(state, "budgeter")
 
-    if not has_tool_results:
+    if not post_tools:
         model = ChatCodexOAuth(
             model="gpt-5.2-codex", system_prompt_mode=mode
         ).bind_tools(
@@ -405,7 +415,8 @@ def budgeter_agent_node(
                 "You are a budgeter.\n"
                 "Rules:\n"
                 "- You MUST call tools in this step\n"
-                "- Call calc(...) to propose a realistic total near the budget cap\n"
+                "- Call calc(...) to compute a candidate total\n"
+                "- For calc, ONLY use numbers and operators (no variables)\n"
                 "- Do not output the final JSON yet"
             )
         )
@@ -413,7 +424,8 @@ def budgeter_agent_node(
             content=(
                 f"Budget cap: ${budget_usd} USD\n"
                 f"City: {city}\n"
-                "Call calc to compute a candidate total between 85% and 100% of the cap."
+                "Call calc with a numeric expression that yields a total between "
+                "85% and 100% of the cap. Example: '600*0.95'."
             )
         )
     else:
