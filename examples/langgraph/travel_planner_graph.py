@@ -234,6 +234,31 @@ def _post_tools_for_owner(state: PlannerState, owner: str) -> bool:
     return _has_recent_tool_results(state.get("messages") or [])
 
 
+def _extract_json_object(text: str) -> str | None:
+    """Extract a JSON object from a model response.
+
+    Many models return JSON wrapped in markdown fences (```json ... ```). We want
+    the graph to evaluate adapter/model behavior, not fail due to formatting.
+    """
+
+    raw = text.strip()
+    if not raw:
+        return None
+
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if len(lines) >= 3:
+            # Drop the opening fence and closing fence.
+            raw = "\n".join(lines[1:-1]).strip()
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    return raw[start : end + 1]
+
+
 # -----------------------------
 # LangGraph state
 # -----------------------------
@@ -510,12 +535,13 @@ def budgeter_agent_node(
                 "- Do not output the final JSON yet"
             )
         )
+        min_ratio_pct = int(min_spend_ratio * 100)
         user = HumanMessage(
             content=(
                 f"Budget cap: ${budget_usd} USD\n"
                 f"City: {city}\n"
-                "Call calc with a numeric expression that yields a total between "
-                "85% and 100% of the cap. Example: '600*0.95'."
+                f"Call calc with a numeric expression that yields a total between {min_ratio_pct}% "
+                "and 100% of the cap. Example: '600*0.95'."
             )
         )
     else:
@@ -543,7 +569,7 @@ def budgeter_agent_node(
                 f"City: {city}\n"
                 f"Budget cap: ${budget_usd} USD\n"
                 f"Constraints: {constraints}\n\n"
-                "Return only JSON."
+                "Return only a JSON object (no markdown fences, no ```)."
             )
         )
 
@@ -556,13 +582,15 @@ def budgeter_agent_node(
     # If the model already produced JSON, parse it; otherwise we keep the message and
     # let the supervisor decide what to do next.
     parsed_budget: dict[str, Any] | None = None
-    if isinstance(msg.content, str) and msg.content.strip().startswith("{"):
-        try:
-            parsed_budget = BudgetBreakdown.model_validate_json(
-                msg.content
-            ).model_dump()
-        except Exception as exc:
-            print("budget parse failed:", exc)
+    if isinstance(msg.content, str):
+        extracted = _extract_json_object(msg.content)
+        if extracted is not None:
+            try:
+                parsed_budget = BudgetBreakdown.model_validate_json(
+                    extracted
+                ).model_dump()
+            except Exception as exc:
+                print("budget parse failed:", exc)
 
     # Enforce a "near cap" constraint to push tool+instruction adherence.
     if parsed_budget is not None:
