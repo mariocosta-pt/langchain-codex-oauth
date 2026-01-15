@@ -52,4 +52,5 @@ python -m pip install -e .
 python -m pip install langgraph
 
 python examples/langgraph/system_prompt_drift.py --mode strict
+python examples/langgraph/travel_planner_graph.py --city Tokyo --budget 600 --mode strict
 ```
