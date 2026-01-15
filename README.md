@@ -10,6 +10,7 @@ This project authenticates locally via OpenAI OAuth (no `OPENAI_API_KEY`) and ta
 - Streaming support via SSE (`.stream()` yields chunks as they arrive).
 - Async support via `.ainvoke()` / `.astream()`.
 - Tool calling via `.bind_tools(...)` (useful for LangGraph agents).
+- Streaming tool call chunks (`tool_call_chunks`) when available.
 - Stop sequences (`stop=[...]`) for invoke/stream (best-effort).
 - Response and usage metadata (`response_metadata`, `usage_metadata`) when available.
 
@@ -57,6 +58,7 @@ python examples/async_hello.py
 python examples/chatopenai_compatibility.py
 python examples/flags_and_params.py
 python examples/usage_and_metadata.py
+python examples/tool_call_chunks.py
 ```
 
 ## Configuration knobs (ChatOpenAI-like)

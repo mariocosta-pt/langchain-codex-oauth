@@ -70,6 +70,83 @@ def _truncate_at_stop(text: str, stop: list[str] | None) -> str:
     return text[:earliest] if earliest is not None else text
 
 
+def _coerce_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_tool_call_item_added(
+    event: dict[str, Any],
+) -> tuple[int, str, str | None] | None:
+    """Extract tool call identity from `response.output_item.added` events."""
+
+    if event.get("type") != "response.output_item.added":
+        return None
+
+    output_index = _coerce_int(event.get("output_index"))
+    if output_index is None:
+        return None
+
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return None
+
+    if item.get("type") != "function_call":
+        return None
+
+    call_id = item.get("call_id") or item.get("id") or event.get("call_id")
+    if not isinstance(call_id, str) or not call_id:
+        return None
+
+    name = item.get("name")
+    name_str = name if isinstance(name, str) and name else None
+
+    return output_index, call_id, name_str
+
+
+def _extract_tool_call_args_delta(event: dict[str, Any]) -> tuple[int, str, str] | None:
+    """Extract tool call argument deltas from streaming events."""
+
+    if event.get("type") != "response.function_call_arguments.delta":
+        return None
+
+    output_index = _coerce_int(event.get("output_index"))
+    if output_index is None:
+        return None
+
+    call_id = event.get("call_id")
+    if not isinstance(call_id, str) or not call_id:
+        return None
+
+    delta = event.get("delta")
+    if not isinstance(delta, str) or not delta:
+        return None
+
+    return output_index, call_id, delta
+
+
+def _tool_call_chunk(
+    *,
+    call_id: str,
+    name: str | None,
+    args_delta: str,
+    index: int,
+) -> Any:
+    return {
+        "type": "tool_call_chunk",
+        "id": call_id,
+        "name": name,
+        "args": args_delta,
+        "index": index,
+    }
+
+
 def _to_input_items(messages: list[BaseMessage]) -> list[InputItem]:
     items: list[InputItem] = []
 
@@ -315,6 +392,9 @@ class ChatCodexOAuth(BaseChatModel):
         buffer = ""
         stopped = False
 
+        tool_call_name_by_id: dict[str, str | None] = {}
+        tool_call_index_by_id: dict[str, int] = {}
+
         for event in self._client.stream_events(
             input_items=input_items,
             model=self.model,
@@ -351,6 +431,37 @@ class ChatCodexOAuth(BaseChatModel):
                     )
                 )
                 return
+
+            added = _extract_tool_call_item_added(event)
+            if added and not stopped:
+                output_index, call_id, name = added
+                tool_call_name_by_id[call_id] = name
+                tool_call_index_by_id[call_id] = output_index
+                continue
+
+            args_delta = _extract_tool_call_args_delta(event)
+            if args_delta and not stopped:
+                output_index, call_id, delta_text = args_delta
+
+                if call_id not in tool_call_index_by_id:
+                    tool_call_index_by_id[call_id] = output_index
+                if call_id not in tool_call_name_by_id:
+                    tool_call_name_by_id[call_id] = None
+
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            _tool_call_chunk(
+                                call_id=call_id,
+                                name=tool_call_name_by_id.get(call_id),
+                                args_delta=delta_text,
+                                index=tool_call_index_by_id[call_id],
+                            )
+                        ],
+                    )
+                )
+                continue
 
             delta = extract_text_delta(event)
             if not delta or stopped:
@@ -460,6 +571,9 @@ class ChatCodexOAuth(BaseChatModel):
         buffer = ""
         stopped = False
 
+        tool_call_name_by_id: dict[str, str | None] = {}
+        tool_call_index_by_id: dict[str, int] = {}
+
         async for event in self._async_client.astream_events(
             input_items=input_items,
             model=self.model,
@@ -496,6 +610,37 @@ class ChatCodexOAuth(BaseChatModel):
                     )
                 )
                 return
+
+            added = _extract_tool_call_item_added(event)
+            if added and not stopped:
+                output_index, call_id, name = added
+                tool_call_name_by_id[call_id] = name
+                tool_call_index_by_id[call_id] = output_index
+                continue
+
+            args_delta = _extract_tool_call_args_delta(event)
+            if args_delta and not stopped:
+                output_index, call_id, delta_text = args_delta
+
+                if call_id not in tool_call_index_by_id:
+                    tool_call_index_by_id[call_id] = output_index
+                if call_id not in tool_call_name_by_id:
+                    tool_call_name_by_id[call_id] = None
+
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            _tool_call_chunk(
+                                call_id=call_id,
+                                name=tool_call_name_by_id.get(call_id),
+                                args_delta=delta_text,
+                                index=tool_call_index_by_id[call_id],
+                            )
+                        ],
+                    )
+                )
+                continue
 
             delta = extract_text_delta(event)
             if not delta or stopped:
