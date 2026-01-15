@@ -11,6 +11,7 @@ This project authenticates locally via OpenAI OAuth (no `OPENAI_API_KEY`) and ta
 - Async support via `.ainvoke()` / `.astream()`.
 - Tool calling via `.bind_tools(...)` (useful for LangGraph agents).
 - Stop sequences (`stop=[...]`) for invoke/stream (best-effort).
+- Response and usage metadata (`response_metadata`, `usage_metadata`) when available.
 
 ## What this is not
 - Not for sharing accounts/subscriptions.
@@ -55,6 +56,7 @@ python examples/tools.py
 python examples/async_hello.py
 python examples/chatopenai_compatibility.py
 python examples/flags_and_params.py
+python examples/usage_and_metadata.py
 ```
 
 ## Configuration knobs (ChatOpenAI-like)
@@ -67,3 +69,4 @@ python examples/flags_and_params.py
 - The Codex backend requires validated `instructions`. By default the library uses cached prompts, attempts GitHub fetch if missing, and falls back to bundled prompts (override with `LANGCHAIN_CODEX_OAUTH_INSTRUCTIONS_MODE`).
 - The adapter aims to be OpenAI-like: tool schemas from `convert_to_openai_tool(...)` and `with_structured_output(...)` are supported.
 - If you hit ChatGPT usage limits, the library normalizes some backend “usage limit” errors to HTTP 429 semantics.
+- Usage counts and finish reasons are best-effort (the backend is not a stable public API).

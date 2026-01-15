@@ -3,19 +3,22 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from codex_oauth.response import ParsedAssistantMessage
+from codex_oauth.response import CompletionResult, ParsedAssistantMessage
 from langchain_codex_oauth import ChatCodexOAuth
 
 
 def test_stop_sequences_truncate_invoke(monkeypatch: Any) -> None:
     model = ChatCodexOAuth(model="gpt-5.2-codex")
 
-    def _fake_complete(**_: Any) -> ParsedAssistantMessage:
-        return ParsedAssistantMessage(
+    def _fake_complete_with_response(**_: Any) -> CompletionResult:
+        parsed = ParsedAssistantMessage(
             content="hello STOP world", tool_calls=[], invalid_tool_calls=[]
         )
+        return CompletionResult(parsed=parsed, response={"output": []})
 
-    monkeypatch.setattr(model._client, "complete", _fake_complete)
+    monkeypatch.setattr(
+        model._client, "complete_with_response", _fake_complete_with_response
+    )
 
     msg = model.invoke([HumanMessage(content="hi")], stop=["STOP"])
     assert msg.content == "hello "
@@ -42,12 +45,15 @@ def test_stop_sequences_truncate_stream(monkeypatch: Any) -> None:
 def test_stop_sequences_truncate_ainvoke(monkeypatch: Any) -> None:
     model = ChatCodexOAuth(model="gpt-5.2-codex")
 
-    async def _fake_acomplete(**_: Any) -> ParsedAssistantMessage:
-        return ParsedAssistantMessage(
+    async def _fake_acomplete_with_response(**_: Any) -> CompletionResult:
+        parsed = ParsedAssistantMessage(
             content="hello STOP world", tool_calls=[], invalid_tool_calls=[]
         )
+        return CompletionResult(parsed=parsed, response={"output": []})
 
-    monkeypatch.setattr(model._async_client, "acomplete", _fake_acomplete)
+    monkeypatch.setattr(
+        model._async_client, "acomplete_with_response", _fake_acomplete_with_response
+    )
 
     msg = asyncio.run(model.ainvoke([HumanMessage(content="hi")], stop=["STOP"]))
     assert msg.content == "hello "

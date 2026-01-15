@@ -23,7 +23,11 @@ from codex_oauth.models import (
     messages_to_input,
     normalize_model,
 )
-from codex_oauth.response import ParsedAssistantMessage, parse_assistant_message
+from codex_oauth.response import (
+    CompletionResult,
+    ParsedAssistantMessage,
+    parse_assistant_message,
+)
 from codex_oauth.sse import (
     aiter_sse_events,
     extract_text_delta,
@@ -219,7 +223,7 @@ class CodexClient:
                         "Network error calling Codex backend", status_code=None
                     ) from exc
 
-    def complete(
+    def complete_with_response(
         self,
         *,
         input_items: list[InputItem],
@@ -232,7 +236,7 @@ class CodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
-    ) -> ParsedAssistantMessage:
+    ) -> CompletionResult:
         last_response: object | None = None
         for event in self.stream_events(
             input_items=input_items,
@@ -250,7 +254,37 @@ class CodexClient:
                 last_response = event.get("response")
                 break
 
-        return parse_assistant_message(last_response)
+        return CompletionResult(
+            parsed=parse_assistant_message(last_response),
+            response=last_response,
+        )
+
+    def complete(
+        self,
+        *,
+        input_items: list[InputItem],
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_summary: str | None = None,
+        text_verbosity: str | None = None,
+        include: list[str] | None = None,
+    ) -> ParsedAssistantMessage:
+        return self.complete_with_response(
+            input_items=input_items,
+            model=model,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+            reasoning_summary=reasoning_summary,
+            text_verbosity=text_verbosity,
+            include=include,
+        ).parsed
 
     # Backwards-compatible helpers for plain chat.
     def stream_chat(
@@ -520,7 +554,7 @@ class AsyncCodexClient:
                         "Network error calling Codex backend", status_code=None
                     ) from exc
 
-    async def acomplete(
+    async def acomplete_with_response(
         self,
         *,
         input_items: list[InputItem],
@@ -533,7 +567,7 @@ class AsyncCodexClient:
         reasoning_summary: str | None = None,
         text_verbosity: str | None = None,
         include: list[str] | None = None,
-    ) -> ParsedAssistantMessage:
+    ) -> CompletionResult:
         last_response: object | None = None
         async for event in self.astream_events(
             input_items=input_items,
@@ -551,4 +585,36 @@ class AsyncCodexClient:
                 last_response = event.get("response")
                 break
 
-        return parse_assistant_message(last_response)
+        return CompletionResult(
+            parsed=parse_assistant_message(last_response),
+            response=last_response,
+        )
+
+    async def acomplete(
+        self,
+        *,
+        input_items: list[InputItem],
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_summary: str | None = None,
+        text_verbosity: str | None = None,
+        include: list[str] | None = None,
+    ) -> ParsedAssistantMessage:
+        return (
+            await self.acomplete_with_response(
+                input_items=input_items,
+                model=model,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                reasoning_effort=reasoning_effort,
+                reasoning_summary=reasoning_summary,
+                text_verbosity=text_verbosity,
+                include=include,
+            )
+        ).parsed

@@ -12,7 +12,13 @@ from codex_oauth.models import (
     function_call_output_item,
     message_item,
 )
-from codex_oauth.response import ParsedAssistantMessage, parse_assistant_message
+from codex_oauth.response import (
+    CompletionResult,
+    ParsedAssistantMessage,
+    extract_response_metadata,
+    extract_usage_metadata,
+    parse_assistant_message,
+)
 from codex_oauth.sse import extract_text_delta, is_terminal_event
 from codex_oauth.store import AuthStore
 from langchain_codex_oauth.tooling import convert_tools, normalize_tool_choice
@@ -213,7 +219,7 @@ class ChatCodexOAuth(BaseChatModel):
         normalized_choice = normalize_tool_choice(tool_choice)
         return self.bind(tools=openai_tools, tool_choice=normalized_choice, **kwargs)
 
-    def _complete(
+    def _complete_with_response(
         self,
         messages: list[BaseMessage],
         *,
@@ -221,8 +227,8 @@ class ChatCodexOAuth(BaseChatModel):
         tool_choice: Any | None,
         temperature: float | None,
         max_output_tokens: int | None,
-    ) -> ParsedAssistantMessage:
-        return self._client.complete(
+    ) -> CompletionResult:
+        return self._client.complete_with_response(
             input_items=_to_input_items(messages),
             model=self.model,
             tools=tools,
@@ -234,6 +240,23 @@ class ChatCodexOAuth(BaseChatModel):
             text_verbosity=self.text_verbosity,
             include=self.include,
         )
+
+    def _complete(
+        self,
+        messages: list[BaseMessage],
+        *,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: Any | None,
+        temperature: float | None,
+        max_output_tokens: int | None,
+    ) -> ParsedAssistantMessage:
+        return self._complete_with_response(
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        ).parsed
 
     def _generate(
         self,
@@ -248,7 +271,7 @@ class ChatCodexOAuth(BaseChatModel):
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
 
-        parsed = self._complete(
+        result = self._complete_with_response(
             messages,
             tools=tools if isinstance(tools, list) else None,
             tool_choice=tool_choice,
@@ -256,14 +279,19 @@ class ChatCodexOAuth(BaseChatModel):
             max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
         )
 
-        content = _truncate_at_stop(parsed.content, stop)
+        parsed = result.parsed
+        response_metadata = extract_response_metadata(result.response)
+        usage_metadata = extract_usage_metadata(result.response)
 
+        content = _truncate_at_stop(parsed.content, stop)
         tool_calls = _ensure_tool_call_ids(parsed.tool_calls)
 
         message = AIMessage(
             content=content,
             tool_calls=tool_calls,
             invalid_tool_calls=parsed.invalid_tool_calls,
+            response_metadata=response_metadata,
+            usage_metadata=usage_metadata,
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
 
@@ -305,18 +333,23 @@ class ChatCodexOAuth(BaseChatModel):
                         run_manager.on_llm_new_token(buffer)
                     yield ChatGenerationChunk(message=AIMessageChunk(content=buffer))
 
-                parsed = parse_assistant_message(event.get("response"))
+                raw_response = event.get("response")
+                parsed = parse_assistant_message(raw_response)
                 tool_calls = _ensure_tool_call_ids(parsed.tool_calls)
 
-                if tool_calls or parsed.invalid_tool_calls:
-                    yield ChatGenerationChunk(
-                        message=AIMessageChunk(
-                            content="",
-                            tool_calls=tool_calls,
-                            invalid_tool_calls=parsed.invalid_tool_calls,
-                            chunk_position="last",
-                        )
+                response_metadata = extract_response_metadata(raw_response)
+                usage_metadata = extract_usage_metadata(raw_response)
+
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        tool_calls=tool_calls,
+                        invalid_tool_calls=parsed.invalid_tool_calls,
+                        response_metadata=response_metadata,
+                        usage_metadata=usage_metadata,
+                        chunk_position="last",
                     )
+                )
                 return
 
             delta = extract_text_delta(event)
@@ -378,7 +411,7 @@ class ChatCodexOAuth(BaseChatModel):
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
 
-        parsed = await self._async_client.acomplete(
+        result = await self._async_client.acomplete_with_response(
             input_items=_to_input_items(messages),
             model=self.model,
             tools=tools if isinstance(tools, list) else None,
@@ -391,13 +424,19 @@ class ChatCodexOAuth(BaseChatModel):
             include=self.include,
         )
 
-        content = _truncate_at_stop(parsed.content, stop)
+        parsed = result.parsed
+        response_metadata = extract_response_metadata(result.response)
+        usage_metadata = extract_usage_metadata(result.response)
 
+        content = _truncate_at_stop(parsed.content, stop)
         tool_calls = _ensure_tool_call_ids(parsed.tool_calls)
+
         message = AIMessage(
             content=content,
             tool_calls=tool_calls,
             invalid_tool_calls=parsed.invalid_tool_calls,
+            response_metadata=response_metadata,
+            usage_metadata=usage_metadata,
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
 
@@ -439,18 +478,23 @@ class ChatCodexOAuth(BaseChatModel):
                         await run_manager.on_llm_new_token(buffer)
                     yield ChatGenerationChunk(message=AIMessageChunk(content=buffer))
 
-                parsed = parse_assistant_message(event.get("response"))
+                raw_response = event.get("response")
+                parsed = parse_assistant_message(raw_response)
                 tool_calls = _ensure_tool_call_ids(parsed.tool_calls)
 
-                if tool_calls or parsed.invalid_tool_calls:
-                    yield ChatGenerationChunk(
-                        message=AIMessageChunk(
-                            content="",
-                            tool_calls=tool_calls,
-                            invalid_tool_calls=parsed.invalid_tool_calls,
-                            chunk_position="last",
-                        )
+                response_metadata = extract_response_metadata(raw_response)
+                usage_metadata = extract_usage_metadata(raw_response)
+
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        tool_calls=tool_calls,
+                        invalid_tool_calls=parsed.invalid_tool_calls,
+                        response_metadata=response_metadata,
+                        usage_metadata=usage_metadata,
+                        chunk_position="last",
                     )
+                )
                 return
 
             delta = extract_text_delta(event)
