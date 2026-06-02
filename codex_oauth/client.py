@@ -60,6 +60,8 @@ class _StreamResponseState:
     tool_calls_by_item_id: dict[str, _StreamToolCallState] = field(default_factory=dict)
     ordered_tool_calls: list[_StreamToolCallState] = field(default_factory=list)
     text_parts: list[str] = field(default_factory=list)
+    reasoning_items: list[dict[str, Any]] = field(default_factory=list)
+    reasoning_summary_parts: dict[int, str] = field(default_factory=dict)
 
 
 def _coerce_output_index(value: object, fallback: int) -> int:
@@ -134,6 +136,36 @@ def _stream_tool_calls_to_output(
     return output
 
 
+def _stream_reasoning_to_output(stream_state: _StreamResponseState) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = [dict(item) for item in stream_state.reasoning_items]
+
+    summary = [
+        {"type": "summary_text", "text": text}
+        for _, text in sorted(stream_state.reasoning_summary_parts.items())
+        if text
+    ]
+    if not summary:
+        return output
+
+    # The stream often provides the same reasoning summary twice: first as
+    # reasoning_summary_text.delta events, then again on the completed reasoning
+    # item. Prefer the completed item, and only synthesize/attach summary text
+    # when no completed item already contains one.
+    has_summary_item = any(
+        isinstance(item.get("summary"), list) and item.get("summary")
+        for item in output
+    )
+    if has_summary_item:
+        return output
+
+    if output:
+        output[-1]["summary"] = summary
+    else:
+        output.append({"type": "reasoning", "summary": summary})
+
+    return output
+
+
 def _response_from_stream_events(
     terminal_response: object | None,
     stream_state: _StreamResponseState,
@@ -146,7 +178,8 @@ def _response_from_stream_events(
     response, so preserve the stream-accumulated output for tool-call parsing.
     """
 
-    ordered_output = _stream_tool_calls_to_output(stream_state)
+    ordered_output = _stream_reasoning_to_output(stream_state)
+    ordered_output.extend(_stream_tool_calls_to_output(stream_state))
 
     if stream_state.text_parts and not any(
         item.get("type") == "message" for item in ordered_output
@@ -167,6 +200,15 @@ def _response_from_stream_events(
     if isinstance(terminal_response, dict):
         existing = terminal_response.get("output")
         if isinstance(existing, list) and existing:
+            reasoning_output = [
+                item for item in ordered_output if item.get("type") == "reasoning"
+            ]
+            has_reasoning = any(
+                isinstance(item, dict) and item.get("type") == "reasoning"
+                for item in existing
+            )
+            if reasoning_output and not has_reasoning:
+                return {**terminal_response, "output": [*reasoning_output, *existing]}
             return terminal_response
         return {**terminal_response, "output": ordered_output}
 
@@ -182,7 +224,15 @@ def _accumulate_response_event(
 
     if event_type in {"response.output_item.added", "response.output_item.done"}:
         item = event.get("item")
-        if not isinstance(item, dict) or item.get("type") != "function_call":
+        if not isinstance(item, dict):
+            return
+
+        if item.get("type") == "reasoning":
+            if event_type == "response.output_item.done" or item.get("summary"):
+                stream_state.reasoning_items.append(dict(item))
+            return
+
+        if item.get("type") != "function_call":
             return
 
         output_index = _coerce_output_index(
@@ -229,6 +279,23 @@ def _accumulate_response_event(
         arguments = event.get("arguments")
         if isinstance(arguments, str):
             state.arguments = arguments
+        return
+
+    if event_type == "response.reasoning_summary_text.delta":
+        delta = event.get("delta")
+        if isinstance(delta, str):
+            summary_index = _coerce_output_index(event.get("summary_index"), 0)
+            stream_state.reasoning_summary_parts[summary_index] = (
+                stream_state.reasoning_summary_parts.get(summary_index, "") + delta
+            )
+        return
+
+    if event_type == "response.reasoning_summary_part.added":
+        summary_index = _coerce_output_index(event.get("summary_index"), 0)
+        stream_state.reasoning_summary_parts.setdefault(summary_index, "")
+        part = event.get("part")
+        if isinstance(part, dict) and isinstance(part.get("text"), str):
+            stream_state.reasoning_summary_parts[summary_index] += part["text"]
         return
 
     delta = extract_text_delta(event)

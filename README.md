@@ -74,9 +74,34 @@ python examples/langgraph/system_prompt_drift.py --mode strict
 - `timeout` (seconds) and `max_retries`
 - `temperature` and `max_tokens` (best-effort passthrough)
 - `stop=[...]` for `.invoke/.stream/.ainvoke/.astream` (best-effort)
+- `reasoning={"effort": ..., "summary": ...}` for OpenAI Responses-style reasoning controls
+- `verbosity="low" | "medium" | "high"` as a ChatOpenAI-style alias for `text_verbosity`
 
-Additional Codex-specific knob:
+Reasoning effort can also be supplied as a model suffix, inspired by Codex proxies:
+```python
+from langchain_codex_oauth import ChatCodexOAuth
+
+# Sends upstream model="gpt-5.5" with reasoning effort "low".
+model = ChatCodexOAuth(model="gpt-5.5-low", verbosity="medium")
+
+# Equivalent explicit Responses-style configuration.
+model = ChatCodexOAuth(
+    model="gpt-5.5",
+    reasoning={"effort": "low", "summary": "auto"},
+    verbosity="medium",
+)
+```
+Supported effort suffixes/values are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`.
+Reasoning summary values are backend/model-dependent; common values are `auto`, `concise`, `detailed`, and `none`.
+If summaries are returned, they are exposed under `AIMessage.response_metadata["reasoning"]`; encrypted reasoning content is not exposed, only marked as present.
+
+Backward-compatible Codex-specific aliases are still supported:
+- `reasoning_effort`, `reasoning_summary`
+- `text_verbosity`
+- `include` (defaults to `['reasoning.encrypted_content']` for reasoning-state continuity)
 - `system_prompt_mode` (`"strict"` default, `"default"`, `"disabled"`) to reduce system-prompt drift on the consumer backend.
+
+Note: Codex CLI Fast mode/service tier is separate from reasoning effort and is not exposed yet.
 
 ## RAG / Embeddings
 `ChatCodexOAuth` is a chat model, not an embedding model.

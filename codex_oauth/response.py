@@ -141,6 +141,105 @@ def parse_assistant_message(response: object) -> ParsedAssistantMessage:
     )
 
 
+def _extract_reasoning_metadata(response: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract reasoning summaries from Responses-style `reasoning` output items.
+
+    The Responses API does not expose raw private chain-of-thought, but it can
+    return model-provided summaries when `reasoning.summary` is requested. Keep
+    encrypted reasoning state out of metadata; expose only whether it existed.
+    """
+
+    output = response.get("output")
+    if not isinstance(output, list):
+        return None
+
+    items: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str | None, str | None]] = set()
+    seen_texts: set[str] = set()
+    summary_texts: list[str] = []
+    content_texts: list[str] = []
+
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "reasoning":
+            continue
+
+        sanitized: dict[str, Any] = {"type": "reasoning"}
+
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id:
+            sanitized["id"] = item_id
+
+        status = item.get("status")
+        if isinstance(status, str) and status:
+            sanitized["status"] = status
+
+        if isinstance(item.get("encrypted_content"), str):
+            sanitized["encrypted_content_present"] = True
+
+        summary = item.get("summary")
+        item_summary_texts: list[str] = []
+        if isinstance(summary, list):
+            sanitized_summary: list[dict[str, str]] = []
+            for block in summary:
+                if not isinstance(block, dict):
+                    continue
+                text = block.get("text")
+                if not isinstance(text, str) or not text:
+                    continue
+                block_type = block.get("type")
+                block_metadata = {
+                    "type": block_type if isinstance(block_type, str) else "summary_text",
+                    "text": text,
+                }
+                sanitized_summary.append(block_metadata)
+                item_summary_texts.append(text)
+            if sanitized_summary:
+                sanitized["summary"] = sanitized_summary
+
+        content = item.get("content")
+        item_content_texts: list[str] = []
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    item_content_texts.append(text)
+
+        summary_text = "\n\n".join(item_summary_texts) if item_summary_texts else None
+        content_text = "\n\n".join(item_content_texts) if item_content_texts else None
+
+        text_key = summary_text or content_text
+        dedupe_key = (
+            sanitized.get("id") if isinstance(sanitized.get("id"), str) else None,
+            text_key,
+        )
+        if dedupe_key in seen_keys or (text_key is not None and text_key in seen_texts):
+            continue
+        seen_keys.add(dedupe_key)
+        if text_key is not None:
+            seen_texts.add(text_key)
+
+        if summary_text:
+            sanitized["summary_text"] = summary_text
+            summary_texts.extend(item_summary_texts)
+        if content_text:
+            sanitized["content_text"] = content_text
+            content_texts.extend(item_content_texts)
+
+        items.append(sanitized)
+
+    if not items:
+        return None
+
+    result: dict[str, Any] = {"items": items}
+    if summary_texts:
+        result["summary"] = "\n\n".join(summary_texts)
+    if content_texts:
+        result["content"] = "\n\n".join(content_texts)
+    return result
+
+
 def extract_response_metadata(response: object) -> dict[str, Any]:
     """Extract OpenAI-like response metadata from a Responses-style object."""
 
@@ -164,6 +263,10 @@ def extract_response_metadata(response: object) -> dict[str, Any]:
     created_at = response.get("created_at")
     if isinstance(created_at, (int, float)):
         metadata["created_at"] = int(created_at)
+
+    reasoning = _extract_reasoning_metadata(response)
+    if reasoning:
+        metadata["reasoning"] = reasoning
 
     # Best-effort finish_reason.
     finish_reason = response.get("finish_reason")

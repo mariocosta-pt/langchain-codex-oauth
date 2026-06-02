@@ -149,6 +149,57 @@ def _tool_call_chunk(
 
 SystemPromptMode = Literal["strict", "default", "disabled"]
 
+_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+
+
+def _split_reasoning_effort_suffix(model: str) -> tuple[str, str | None]:
+    """Split model names like `gpt-5.5-xhigh` into model + effort."""
+
+    for effort in sorted(_REASONING_EFFORTS, key=len, reverse=True):
+        suffix = f"-{effort}"
+        if model.endswith(suffix):
+            return model[: -len(suffix)], effort
+    return model, None
+
+
+def _normalize_reasoning_settings(
+    *,
+    reasoning: dict[str, Any] | None,
+    reasoning_effort: str | None,
+    reasoning_summary: str | None,
+) -> tuple[str | None, str | None]:
+    """Normalize ChatOpenAI-style reasoning config into Codex request fields."""
+
+    if reasoning is None:
+        return reasoning_effort, reasoning_summary
+
+    effort = reasoning.get("effort", reasoning_effort)
+    summary = reasoning.get("summary", reasoning_summary)
+
+    return (
+        effort if isinstance(effort, str) else None,
+        summary if isinstance(summary, str) else None,
+    )
+
+
+def _resolve_reasoning_settings(
+    *,
+    default_effort: str | None,
+    default_summary: str | None,
+    reasoning: dict[str, Any] | None,
+    reasoning_effort: str | None,
+    reasoning_summary: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve runtime reasoning kwargs over model defaults."""
+
+    effort = default_effort if reasoning_effort is None else reasoning_effort
+    summary = default_summary if reasoning_summary is None else reasoning_summary
+    return _normalize_reasoning_settings(
+        reasoning=reasoning,
+        reasoning_effort=effort,
+        reasoning_summary=summary,
+    )
+
 
 def _content_to_text(content: Any) -> str:
     """Extract text from LangChain message content.
@@ -281,7 +332,9 @@ class ChatCodexOAuth(BaseChatModel):
     model: str = "gpt-5.2-codex"
     reasoning_effort: str | None = "medium"
     reasoning_summary: str | None = None
+    reasoning: dict[str, Any] | None = None
     text_verbosity: str | None = "medium"
+    verbosity: str | None = None
     include: list[str] | None = ["reasoning.encrypted_content"]
 
     # Common ChatOpenAI-style knobs (best-effort).
@@ -301,7 +354,9 @@ class ChatCodexOAuth(BaseChatModel):
         auth_store: AuthStore | None = None,
         reasoning_effort: str | None = "medium",
         reasoning_summary: str | None = None,
+        reasoning: dict[str, Any] | None = None,
         text_verbosity: str | None = "medium",
+        verbosity: str | None = None,
         include: list[str] | None = None,
         timeout: float | None = None,
         max_retries: int | None = None,
@@ -312,10 +367,16 @@ class ChatCodexOAuth(BaseChatModel):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.model = model or self.model
-        self.reasoning_effort = reasoning_effort
-        self.reasoning_summary = reasoning_summary
-        self.text_verbosity = text_verbosity
+        model_id, suffix_effort = _split_reasoning_effort_suffix(model or self.model)
+        self.model = model_id
+        self.reasoning = reasoning
+        self.reasoning_effort, self.reasoning_summary = _normalize_reasoning_settings(
+            reasoning=reasoning,
+            reasoning_effort=reasoning_effort if suffix_effort is None else suffix_effort,
+            reasoning_summary=reasoning_summary,
+        )
+        self.verbosity = verbosity
+        self.text_verbosity = verbosity if verbosity is not None else text_verbosity
         self.include = include
 
         env_base_url = get_env_str("LANGCHAIN_CODEX_OAUTH_BASE_URL")
@@ -375,7 +436,9 @@ class ChatCodexOAuth(BaseChatModel):
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,
             "reasoning_summary": self.reasoning_summary,
+            "reasoning": self.reasoning,
             "text_verbosity": self.text_verbosity,
+            "verbosity": self.verbosity,
             "system_prompt_mode": self.system_prompt_mode,
         }
 
@@ -398,6 +461,10 @@ class ChatCodexOAuth(BaseChatModel):
         tool_choice: Any | None,
         temperature: float | None,
         max_output_tokens: int | None,
+        reasoning_effort: str | None = None,
+        reasoning_summary: str | None = None,
+        text_verbosity: str | None = None,
+        include: list[str] | None = None,
     ) -> CompletionResult:
         system_texts = (
             _extract_system_texts(messages)
@@ -419,10 +486,14 @@ class ChatCodexOAuth(BaseChatModel):
             tool_choice=tool_choice,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
-            reasoning_effort=self.reasoning_effort,
-            reasoning_summary=self.reasoning_summary,
-            text_verbosity=self.text_verbosity,
-            include=self.include,
+            reasoning_effort=(
+                self.reasoning_effort if reasoning_effort is None else reasoning_effort
+            ),
+            reasoning_summary=(
+                self.reasoning_summary if reasoning_summary is None else reasoning_summary
+            ),
+            text_verbosity=self.text_verbosity if text_verbosity is None else text_verbosity,
+            include=self.include if include is None else include,
             extra_instructions=extra_instructions,
         )
 
@@ -434,6 +505,10 @@ class ChatCodexOAuth(BaseChatModel):
         tool_choice: Any | None,
         temperature: float | None,
         max_output_tokens: int | None,
+        reasoning_effort: str | None = None,
+        reasoning_summary: str | None = None,
+        text_verbosity: str | None = None,
+        include: list[str] | None = None,
     ) -> ParsedAssistantMessage:
         return self._complete_with_response(
             messages,
@@ -441,6 +516,10 @@ class ChatCodexOAuth(BaseChatModel):
             tool_choice=tool_choice,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+            reasoning_summary=reasoning_summary,
+            text_verbosity=text_verbosity,
+            include=include,
         ).parsed
 
     def _generate(
@@ -455,6 +534,17 @@ class ChatCodexOAuth(BaseChatModel):
 
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
+        reasoning_effort, reasoning_summary = _resolve_reasoning_settings(
+            default_effort=self.reasoning_effort,
+            default_summary=self.reasoning_summary,
+            reasoning=kwargs.get("reasoning"),
+            reasoning_effort=kwargs.get("reasoning_effort"),
+            reasoning_summary=kwargs.get("reasoning_summary"),
+        )
+        text_verbosity = kwargs.get(
+            "verbosity", kwargs.get("text_verbosity", self.text_verbosity)
+        )
+        include = kwargs.get("include", self.include)
 
         result = self._complete_with_response(
             messages,
@@ -462,6 +552,10 @@ class ChatCodexOAuth(BaseChatModel):
             tool_choice=tool_choice,
             temperature=temperature if isinstance(temperature, (int, float)) else None,
             max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
+            reasoning_effort=reasoning_effort,
+            reasoning_summary=reasoning_summary,
+            text_verbosity=text_verbosity if isinstance(text_verbosity, str) else None,
+            include=include if isinstance(include, list) else None,
         )
 
         parsed = result.parsed
@@ -492,6 +586,17 @@ class ChatCodexOAuth(BaseChatModel):
 
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
+        reasoning_effort, reasoning_summary = _resolve_reasoning_settings(
+            default_effort=self.reasoning_effort,
+            default_summary=self.reasoning_summary,
+            reasoning=kwargs.get("reasoning"),
+            reasoning_effort=kwargs.get("reasoning_effort"),
+            reasoning_summary=kwargs.get("reasoning_summary"),
+        )
+        text_verbosity = kwargs.get(
+            "verbosity", kwargs.get("text_verbosity", self.text_verbosity)
+        )
+        include = kwargs.get("include", self.include)
 
         system_texts = (
             _extract_system_texts(messages)
@@ -523,10 +628,10 @@ class ChatCodexOAuth(BaseChatModel):
             tool_choice=tool_choice,
             temperature=temperature if isinstance(temperature, (int, float)) else None,
             max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
-            reasoning_effort=self.reasoning_effort,
-            reasoning_summary=self.reasoning_summary,
-            text_verbosity=self.text_verbosity,
-            include=self.include,
+            reasoning_effort=reasoning_effort,
+            reasoning_summary=reasoning_summary,
+            text_verbosity=text_verbosity if isinstance(text_verbosity, str) else None,
+            include=include if isinstance(include, list) else None,
             extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):
@@ -643,6 +748,17 @@ class ChatCodexOAuth(BaseChatModel):
 
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
+        reasoning_effort, reasoning_summary = _resolve_reasoning_settings(
+            default_effort=self.reasoning_effort,
+            default_summary=self.reasoning_summary,
+            reasoning=kwargs.get("reasoning"),
+            reasoning_effort=kwargs.get("reasoning_effort"),
+            reasoning_summary=kwargs.get("reasoning_summary"),
+        )
+        text_verbosity = kwargs.get(
+            "verbosity", kwargs.get("text_verbosity", self.text_verbosity)
+        )
+        include = kwargs.get("include", self.include)
 
         system_texts = (
             _extract_system_texts(messages)
@@ -664,10 +780,10 @@ class ChatCodexOAuth(BaseChatModel):
             tool_choice=tool_choice,
             temperature=temperature if isinstance(temperature, (int, float)) else None,
             max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
-            reasoning_effort=self.reasoning_effort,
-            reasoning_summary=self.reasoning_summary,
-            text_verbosity=self.text_verbosity,
-            include=self.include,
+            reasoning_effort=reasoning_effort,
+            reasoning_summary=reasoning_summary,
+            text_verbosity=text_verbosity if isinstance(text_verbosity, str) else None,
+            include=include if isinstance(include, list) else None,
             extra_instructions=extra_instructions,
         )
 
@@ -699,6 +815,17 @@ class ChatCodexOAuth(BaseChatModel):
 
         temperature = kwargs.get("temperature", getattr(self, "temperature", None))
         max_tokens = kwargs.get("max_tokens", getattr(self, "max_tokens", None))
+        reasoning_effort, reasoning_summary = _resolve_reasoning_settings(
+            default_effort=self.reasoning_effort,
+            default_summary=self.reasoning_summary,
+            reasoning=kwargs.get("reasoning"),
+            reasoning_effort=kwargs.get("reasoning_effort"),
+            reasoning_summary=kwargs.get("reasoning_summary"),
+        )
+        text_verbosity = kwargs.get(
+            "verbosity", kwargs.get("text_verbosity", self.text_verbosity)
+        )
+        include = kwargs.get("include", self.include)
 
         system_texts = (
             _extract_system_texts(messages)
@@ -730,10 +857,10 @@ class ChatCodexOAuth(BaseChatModel):
             tool_choice=tool_choice,
             temperature=temperature if isinstance(temperature, (int, float)) else None,
             max_output_tokens=max_tokens if isinstance(max_tokens, int) else None,
-            reasoning_effort=self.reasoning_effort,
-            reasoning_summary=self.reasoning_summary,
-            text_verbosity=self.text_verbosity,
-            include=self.include,
+            reasoning_effort=reasoning_effort,
+            reasoning_summary=reasoning_summary,
+            text_verbosity=text_verbosity if isinstance(text_verbosity, str) else None,
+            include=include if isinstance(include, list) else None,
             extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):

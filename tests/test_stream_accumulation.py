@@ -264,3 +264,152 @@ def test_accumulates_text_delta_when_terminal_response_omits_output() -> None:
     parsed = parse_assistant_message(response)
     assert parsed.content == "hello"
     assert parsed.tool_calls == []
+
+
+def test_accumulates_reasoning_summary_deltas() -> None:
+    stream_state = _StreamResponseState()
+
+    _accumulate_response_event(
+        {"type": "response.reasoning_summary_part.added", "summary_index": 0},
+        stream_state,
+    )
+    _accumulate_response_event(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "summary_index": 0,
+            "delta": "Checked the fetched text",
+        },
+        stream_state,
+    )
+    _accumulate_response_event(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "summary_index": 0,
+            "delta": " and searched it.",
+        },
+        stream_state,
+    )
+
+    response = _response_from_stream_events(
+        {"id": "resp_1", "status": "completed"}, stream_state
+    )
+
+    assert isinstance(response, dict)
+    assert response["output"] == [
+        {
+            "type": "reasoning",
+            "summary": [
+                {
+                    "type": "summary_text",
+                    "text": "Checked the fetched text and searched it.",
+                }
+            ],
+        }
+    ]
+
+
+def test_merges_stream_reasoning_into_terminal_response_output() -> None:
+    stream_state = _StreamResponseState()
+
+    _accumulate_response_event(
+        {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "type": "reasoning",
+                "id": "rs_1",
+                "encrypted_content": "secret-ciphertext",
+                "summary": [{"type": "summary_text", "text": "Used grep results."}],
+            },
+        },
+        stream_state,
+    )
+
+    response = _response_from_stream_events(
+        {
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                }
+            ]
+        },
+        stream_state,
+    )
+
+    assert isinstance(response, dict)
+    assert response["output"][0]["type"] == "reasoning"
+    assert response["output"][1]["type"] == "message"
+
+
+def test_does_not_duplicate_completed_reasoning_summary_with_stream_deltas() -> None:
+    stream_state = _StreamResponseState()
+
+    _accumulate_response_event(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "summary_index": 0,
+            "delta": "Used grep results.",
+        },
+        stream_state,
+    )
+    _accumulate_response_event(
+        {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [{"type": "summary_text", "text": "Used grep results."}],
+            },
+        },
+        stream_state,
+    )
+
+    response = _response_from_stream_events(None, stream_state)
+
+    assert isinstance(response, dict)
+    assert response["output"] == [
+        {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "Used grep results."}],
+        }
+    ]
+
+
+def test_terminal_reasoning_output_takes_precedence_over_stream_reasoning() -> None:
+    stream_state = _StreamResponseState()
+
+    _accumulate_response_event(
+        {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "stream summary"}],
+            },
+        },
+        stream_state,
+    )
+
+    response = _response_from_stream_events(
+        {
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "terminal summary"}],
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                },
+            ]
+        },
+        stream_state,
+    )
+
+    assert isinstance(response, dict)
+    assert response["output"][0]["summary"][0]["text"] == "terminal summary"
