@@ -5,6 +5,7 @@ import json
 import random
 import time
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -42,10 +43,100 @@ CODEX_RESPONSES_PATH = "/codex/responses"
 DEFAULT_INCLUDE = ["reasoning.encrypted_content"]
 
 
+@dataclass
+class _StreamToolCallState:
+    output_index: int
+    item_id: str | None = None
+    call_id: str | None = None
+    name: str | None = None
+    arguments: str = ""
+
+
+@dataclass
+class _StreamResponseState:
+    tool_calls_by_output_index: dict[int, _StreamToolCallState] = field(
+        default_factory=dict
+    )
+    tool_calls_by_item_id: dict[str, _StreamToolCallState] = field(default_factory=dict)
+    ordered_tool_calls: list[_StreamToolCallState] = field(default_factory=list)
+    text_parts: list[str] = field(default_factory=list)
+
+
+def _coerce_output_index(value: object, fallback: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _clean_str(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _get_or_create_tool_call_state(
+    stream_state: _StreamResponseState,
+    *,
+    output_index: int,
+    item_id: str | None,
+) -> _StreamToolCallState:
+    if item_id and item_id in stream_state.tool_calls_by_item_id:
+        state = stream_state.tool_calls_by_item_id[item_id]
+        stream_state.tool_calls_by_output_index.setdefault(output_index, state)
+        return state
+
+    if output_index in stream_state.tool_calls_by_output_index:
+        state = stream_state.tool_calls_by_output_index[output_index]
+        if item_id:
+            state.item_id = item_id
+            stream_state.tool_calls_by_item_id[item_id] = state
+        return state
+
+    state = _StreamToolCallState(output_index=output_index, item_id=item_id)
+    stream_state.tool_calls_by_output_index[output_index] = state
+    if item_id:
+        stream_state.tool_calls_by_item_id[item_id] = state
+    stream_state.ordered_tool_calls.append(state)
+    return state
+
+
+def _apply_output_item_to_tool_call_state(
+    state: _StreamToolCallState, item: dict[str, Any]
+) -> None:
+    if item_id := _clean_str(item.get("id")):
+        state.item_id = item_id
+    if call_id := _clean_str(item.get("call_id")):
+        state.call_id = call_id
+    if name := _clean_str(item.get("name")):
+        state.name = name
+    if not state.arguments and isinstance(item.get("arguments"), str):
+        state.arguments = item["arguments"]
+
+
+def _stream_tool_calls_to_output(
+    stream_state: _StreamResponseState,
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for index, state in enumerate(stream_state.ordered_tool_calls):
+        if not state.name:
+            continue
+        call_id = state.call_id or state.item_id or f"call_{index + 1}"
+        output.append(
+            {
+                "type": "function_call",
+                "id": state.item_id or call_id,
+                "call_id": call_id,
+                "name": state.name,
+                "arguments": state.arguments or "{}",
+            }
+        )
+    return output
+
+
 def _response_from_stream_events(
     terminal_response: object | None,
-    output_items: dict[int, dict[str, Any]],
-    text_parts: list[str],
+    stream_state: _StreamResponseState,
 ) -> object | None:
     """Merge incremental Responses stream output into the terminal response.
 
@@ -55,14 +146,18 @@ def _response_from_stream_events(
     response, so preserve the stream-accumulated output for tool-call parsing.
     """
 
-    ordered_output = [output_items[i] for i in sorted(output_items)]
+    ordered_output = _stream_tool_calls_to_output(stream_state)
 
-    if text_parts and not any(item.get("type") == "message" for item in ordered_output):
+    if stream_state.text_parts and not any(
+        item.get("type") == "message" for item in ordered_output
+    ):
         ordered_output.append(
             {
                 "type": "message",
                 "role": "assistant",
-                "content": [{"type": "output_text", "text": "".join(text_parts)}],
+                "content": [
+                    {"type": "output_text", "text": "".join(stream_state.text_parts)}
+                ],
             }
         )
 
@@ -79,80 +174,66 @@ def _response_from_stream_events(
 
 
 def _accumulate_response_event(
-    event: dict[str, Any],
-    output_items: dict[int, dict[str, Any]],
-    text_parts: list[str],
+    event: dict[str, Any], stream_state: _StreamResponseState
 ) -> None:
     """Accumulate output items from Responses streaming events."""
 
     event_type = str(event.get("type") or "")
 
     if event_type in {"response.output_item.added", "response.output_item.done"}:
-        raw_index = event.get("output_index")
-        try:
-            output_index = int(raw_index)
-        except (TypeError, ValueError):
-            output_index = len(output_items)
-
         item = event.get("item")
-        if isinstance(item, dict):
-            existing = output_items.get(output_index, {})
-            merged = {**existing, **item}
-            # Preserve argument deltas accumulated before a final/done item if the
-            # done item does not include arguments.
-            if "arguments" not in merged and "arguments" in existing:
-                merged["arguments"] = existing["arguments"]
-            output_items[output_index] = merged
+        if not isinstance(item, dict) or item.get("type") != "function_call":
+            return
+
+        output_index = _coerce_output_index(
+            event.get("output_index"), len(stream_state.ordered_tool_calls)
+        )
+        item_id = _clean_str(item.get("id")) or _clean_str(event.get("item_id"))
+        state = _get_or_create_tool_call_state(
+            stream_state, output_index=output_index, item_id=item_id
+        )
+        _apply_output_item_to_tool_call_state(state, item)
+        if state.item_id:
+            stream_state.tool_calls_by_item_id[state.item_id] = state
         return
 
     if event_type == "response.function_call_arguments.delta":
-        raw_index = event.get("output_index")
-        try:
-            output_index = int(raw_index)
-        except (TypeError, ValueError):
-            output_index = len(output_items)
-
-        item = output_items.setdefault(
-            output_index,
-            {
-                "type": "function_call",
-                "call_id": event.get("call_id"),
-                "name": event.get("name"),
-                "arguments": "",
-            },
+        output_index = _coerce_output_index(
+            event.get("output_index"), len(stream_state.ordered_tool_calls)
         )
-        if event.get("call_id") and not item.get("call_id"):
-            item["call_id"] = event.get("call_id")
-        if event.get("name") and not item.get("name"):
-            item["name"] = event.get("name")
+        item_id = _clean_str(event.get("item_id")) or _clean_str(event.get("call_id"))
+        state = _get_or_create_tool_call_state(
+            stream_state, output_index=output_index, item_id=item_id
+        )
+        if call_id := _clean_str(event.get("call_id")):
+            state.call_id = call_id
+        if name := _clean_str(event.get("name")):
+            state.name = name
         delta = event.get("delta")
         if isinstance(delta, str):
-            item["arguments"] = str(item.get("arguments") or "") + delta
+            state.arguments += delta
         return
 
     if event_type == "response.function_call_arguments.done":
-        raw_index = event.get("output_index")
-        try:
-            output_index = int(raw_index)
-        except (TypeError, ValueError):
-            output_index = len(output_items)
-
-        item = output_items.setdefault(
-            output_index,
-            {
-                "type": "function_call",
-                "call_id": event.get("call_id"),
-                "name": event.get("name"),
-            },
+        output_index = _coerce_output_index(
+            event.get("output_index"), len(stream_state.ordered_tool_calls)
         )
+        item_id = _clean_str(event.get("item_id")) or _clean_str(event.get("call_id"))
+        state = _get_or_create_tool_call_state(
+            stream_state, output_index=output_index, item_id=item_id
+        )
+        if call_id := _clean_str(event.get("call_id")):
+            state.call_id = call_id
+        if name := _clean_str(event.get("name")):
+            state.name = name
         arguments = event.get("arguments")
         if isinstance(arguments, str):
-            item["arguments"] = arguments
+            state.arguments = arguments
         return
 
     delta = extract_text_delta(event)
     if delta:
-        text_parts.append(delta)
+        stream_state.text_parts.append(delta)
 
 
 def _backoff_s(attempt: int) -> float:
@@ -370,8 +451,7 @@ class CodexClient:
         extra_instructions: str | None = None,
     ) -> CompletionResult:
         last_response: object | None = None
-        output_items: dict[int, dict[str, Any]] = {}
-        text_parts: list[str] = []
+        stream_state = _StreamResponseState()
         for event in self.stream_events(
             input_items=input_items,
             model=model,
@@ -387,10 +467,10 @@ class CodexClient:
         ):
             if is_terminal_event(event):
                 last_response = _response_from_stream_events(
-                    event.get("response"), output_items, text_parts
+                    event.get("response"), stream_state
                 )
                 break
-            _accumulate_response_event(event, output_items, text_parts)
+            _accumulate_response_event(event, stream_state)
 
         return CompletionResult(
             parsed=parse_assistant_message(last_response),
@@ -728,8 +808,7 @@ class AsyncCodexClient:
         extra_instructions: str | None = None,
     ) -> CompletionResult:
         last_response: object | None = None
-        output_items: dict[int, dict[str, Any]] = {}
-        text_parts: list[str] = []
+        stream_state = _StreamResponseState()
         async for event in self.astream_events(
             input_items=input_items,
             model=model,
@@ -745,10 +824,10 @@ class AsyncCodexClient:
         ):
             if is_terminal_event(event):
                 last_response = _response_from_stream_events(
-                    event.get("response"), output_items, text_parts
+                    event.get("response"), stream_state
                 )
                 break
-            _accumulate_response_event(event, output_items, text_parts)
+            _accumulate_response_event(event, stream_state)
 
         return CompletionResult(
             parsed=parse_assistant_message(last_response),
