@@ -321,6 +321,7 @@ class CodexClient:
 
         if tools is not None:
             request_body["tools"] = tools
+            request_body["parallel_tool_calls"] = True
         if tool_choice is not None:
             request_body["tool_choice"] = tool_choice
         if temperature is not None:
@@ -677,6 +678,7 @@ class AsyncCodexClient:
 
         if tools is not None:
             request_body["tools"] = tools
+            request_body["parallel_tool_calls"] = True
         if tool_choice is not None:
             request_body["tool_choice"] = tool_choice
         if temperature is not None:

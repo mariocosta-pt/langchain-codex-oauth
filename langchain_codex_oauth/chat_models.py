@@ -150,11 +150,40 @@ def _tool_call_chunk(
 SystemPromptMode = Literal["strict", "default", "disabled"]
 
 
+def _content_to_text(content: Any) -> str:
+    """Extract text from LangChain message content.
+
+    LangChain messages may carry either a plain string or a list of content
+    blocks. Codex Responses input expects text blocks for our current adapter, so
+    preserve known text-like blocks instead of sending Python reprs of lists.
+    """
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+                continue
+            if not isinstance(part, dict):
+                continue
+            part_type = part.get("type")
+            if part_type in {"text", "input_text", "output_text"} and isinstance(
+                part.get("text"), str
+            ):
+                parts.append(part["text"])
+        return "\n".join(part for part in parts if part)
+
+    return str(content) if content is not None else ""
+
+
 def _extract_system_texts(messages: list[BaseMessage]) -> list[str]:
     texts: list[str] = []
     for message in messages:
         if message.type in {"system", "developer"}:
-            text = str(message.content)
+            text = _content_to_text(message.content)
             if text:
                 texts.append(text)
     return texts
@@ -210,11 +239,11 @@ def _to_input_items(
 
     for message in messages_to_process:
         if mode == "default" and message.type in {"system", "developer"}:
-            items.append(message_item("developer", str(message.content)))
+            items.append(message_item("developer", _content_to_text(message.content)))
             continue
 
         if message.type in {"human", "user"}:
-            items.append(message_item("user", str(message.content)))
+            items.append(message_item("user", _content_to_text(message.content)))
             continue
 
         if isinstance(message, ToolMessage) or message.type == "tool":
@@ -224,7 +253,7 @@ def _to_input_items(
             continue
 
         # Assistant message
-        assistant_text = str(message.content) if message.content else ""
+        assistant_text = _content_to_text(message.content) if message.content else ""
         if assistant_text:
             items.append(message_item("assistant", assistant_text))
 
