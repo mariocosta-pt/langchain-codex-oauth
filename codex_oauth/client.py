@@ -42,6 +42,119 @@ CODEX_RESPONSES_PATH = "/codex/responses"
 DEFAULT_INCLUDE = ["reasoning.encrypted_content"]
 
 
+def _response_from_stream_events(
+    terminal_response: object | None,
+    output_items: dict[int, dict[str, Any]],
+    text_parts: list[str],
+) -> object | None:
+    """Merge incremental Responses stream output into the terminal response.
+
+    Some ChatGPT/Codex subscription responses (notably newer Codex models) may
+    emit useful output items during the stream, but the final `response.completed`
+    payload can omit `output`. LangChain `.invoke()` only sees the parsed final
+    response, so preserve the stream-accumulated output for tool-call parsing.
+    """
+
+    ordered_output = [output_items[i] for i in sorted(output_items)]
+
+    if text_parts and not any(item.get("type") == "message" for item in ordered_output):
+        ordered_output.append(
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "".join(text_parts)}],
+            }
+        )
+
+    if not ordered_output:
+        return terminal_response
+
+    if isinstance(terminal_response, dict):
+        existing = terminal_response.get("output")
+        if isinstance(existing, list) and existing:
+            return terminal_response
+        return {**terminal_response, "output": ordered_output}
+
+    return {"output": ordered_output}
+
+
+def _accumulate_response_event(
+    event: dict[str, Any],
+    output_items: dict[int, dict[str, Any]],
+    text_parts: list[str],
+) -> None:
+    """Accumulate output items from Responses streaming events."""
+
+    event_type = str(event.get("type") or "")
+
+    if event_type in {"response.output_item.added", "response.output_item.done"}:
+        raw_index = event.get("output_index")
+        try:
+            output_index = int(raw_index)
+        except (TypeError, ValueError):
+            output_index = len(output_items)
+
+        item = event.get("item")
+        if isinstance(item, dict):
+            existing = output_items.get(output_index, {})
+            merged = {**existing, **item}
+            # Preserve argument deltas accumulated before a final/done item if the
+            # done item does not include arguments.
+            if "arguments" not in merged and "arguments" in existing:
+                merged["arguments"] = existing["arguments"]
+            output_items[output_index] = merged
+        return
+
+    if event_type == "response.function_call_arguments.delta":
+        raw_index = event.get("output_index")
+        try:
+            output_index = int(raw_index)
+        except (TypeError, ValueError):
+            output_index = len(output_items)
+
+        item = output_items.setdefault(
+            output_index,
+            {
+                "type": "function_call",
+                "call_id": event.get("call_id"),
+                "name": event.get("name"),
+                "arguments": "",
+            },
+        )
+        if event.get("call_id") and not item.get("call_id"):
+            item["call_id"] = event.get("call_id")
+        if event.get("name") and not item.get("name"):
+            item["name"] = event.get("name")
+        delta = event.get("delta")
+        if isinstance(delta, str):
+            item["arguments"] = str(item.get("arguments") or "") + delta
+        return
+
+    if event_type == "response.function_call_arguments.done":
+        raw_index = event.get("output_index")
+        try:
+            output_index = int(raw_index)
+        except (TypeError, ValueError):
+            output_index = len(output_items)
+
+        item = output_items.setdefault(
+            output_index,
+            {
+                "type": "function_call",
+                "call_id": event.get("call_id"),
+                "name": event.get("name"),
+            },
+        )
+        arguments = event.get("arguments")
+        if isinstance(arguments, str):
+            item["arguments"] = arguments
+        return
+
+    delta = extract_text_delta(event)
+    if delta:
+        text_parts.append(delta)
+
+
 def _backoff_s(attempt: int) -> float:
     base = min(8.0, 0.5 * (2**attempt))
     return base * (1.0 + random.random() * 0.1)
@@ -257,6 +370,8 @@ class CodexClient:
         extra_instructions: str | None = None,
     ) -> CompletionResult:
         last_response: object | None = None
+        output_items: dict[int, dict[str, Any]] = {}
+        text_parts: list[str] = []
         for event in self.stream_events(
             input_items=input_items,
             model=model,
@@ -271,8 +386,11 @@ class CodexClient:
             extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):
-                last_response = event.get("response")
+                last_response = _response_from_stream_events(
+                    event.get("response"), output_items, text_parts
+                )
                 break
+            _accumulate_response_event(event, output_items, text_parts)
 
         return CompletionResult(
             parsed=parse_assistant_message(last_response),
@@ -610,6 +728,8 @@ class AsyncCodexClient:
         extra_instructions: str | None = None,
     ) -> CompletionResult:
         last_response: object | None = None
+        output_items: dict[int, dict[str, Any]] = {}
+        text_parts: list[str] = []
         async for event in self.astream_events(
             input_items=input_items,
             model=model,
@@ -624,8 +744,11 @@ class AsyncCodexClient:
             extra_instructions=extra_instructions,
         ):
             if is_terminal_event(event):
-                last_response = event.get("response")
+                last_response = _response_from_stream_events(
+                    event.get("response"), output_items, text_parts
+                )
                 break
+            _accumulate_response_event(event, output_items, text_parts)
 
         return CompletionResult(
             parsed=parse_assistant_message(last_response),
