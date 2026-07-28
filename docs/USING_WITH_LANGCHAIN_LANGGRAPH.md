@@ -78,7 +78,7 @@ model = ChatCodexOAuth(model="gpt-5.6-terra-med")
 response = model.invoke(
     [
         SystemMessage(content="Answer briefly and objectively."),
-        HumanMessage(content="Explain what a Singer tap is."),
+        HumanMessage(content="Explain what a task queue is."),
     ]
 )
 
@@ -93,19 +93,19 @@ from langchain_core.tools import tool
 from langchain_codex_oauth import ChatCodexOAuth
 
 @tool
-def list_streams() -> list[str]:
-    """Return the streams available in the current integration."""
-    return ["products", "suppliers", "orders"]
+def word_count(text: str) -> int:
+    """Count the words in a piece of text."""
+    return len(text.split())
 
 model = ChatCodexOAuth(model="gpt-5.6-terra-med")
 agent = create_agent(
     model=model,
-    tools=[list_streams],
+    tools=[word_count],
     system_prompt="Use the available tools before answering.",
 )
 
 result = agent.invoke(
-    {"messages": [{"role": "user", "content": "Which streams are available?"}]}
+    {"messages": [{"role": "user", "content": "How many words are in 'hello world'?"}]}
 )
 print(result["messages"][-1].content)
 ```
@@ -114,7 +114,7 @@ Tools can be Python functions, `BaseTool` instances, APIs, databases, or tools o
 
 ## 4. Using it with LangGraph
 
-The same model instance can be called inside a `StateGraph` node. For the tap workflow, it can be useful to select a different model for each responsibility:
+The same model instance can be called inside a `StateGraph` node. For a multi-step workflow, it can be useful to select a different model for each responsibility:
 
 ```python
 from langchain_codex_oauth import ChatCodexOAuth
@@ -181,7 +181,7 @@ graph.add_conditional_edges(
 )
 app = graph.compile()
 
-result = app.invoke({"requirement": "Create the products stream."})
+result = app.invoke({"requirement": "Create a parser for CSV records."})
 ```
 
 In a real workflow, the reviewer decision should use structured output, such as a Pydantic model containing `verdict`, `issues`, and `repair_target`, rather than parsing free-form text.
@@ -197,20 +197,18 @@ from langchain_core.tools import tool
 from langchain_codex_oauth import ChatCodexOAuth
 
 @tool
-def expected_product_fields() -> list[str]:
-    """Return the minimum fields expected for a product."""
-    return ["id", "sku", "name", "updated_at"]
+def required_project_files() -> list[str]:
+    """Return the files required in the example project."""
+    return ["README.md", "pyproject.toml"]
 
 model = ChatCodexOAuth(model="gpt-5.6-terra-high")
 
 agent = create_deep_agent(
     model=model,
-    tools=[expected_product_fields],
-    system_prompt=(
-        "Implement only the requested stream. Run validations before finishing."
-    ),
+    tools=[required_project_files],
+    system_prompt="Implement only the requested task. Validate it before finishing.",
     backend=FilesystemBackend(root_dir=".", virtual_mode=True),
-    name="tap-builder",
+    name="project-builder",
 )
 
 result = agent.invoke(
@@ -218,11 +216,11 @@ result = agent.invoke(
         "messages": [
             {
                 "role": "user",
-                "content": "Implement the products stream from the documentation.",
+                "content": "Add the documented command-line entry point.",
             }
         ]
     },
-    config={"configurable": {"thread_id": "tap-products-001"}},
+    config={"configurable": {"thread_id": "project-task-001"}},
 )
 ```
 
@@ -236,7 +234,7 @@ Tools can be supplied through `tools=`:
 - LangChain tools (`BaseTool`).
 - API and database clients wrapped as tools.
 - MCP tools obtained, for example, with `MultiServerMCPClient`.
-- Validation, Docker, or Hotglue tools created specifically for the workflow.
+- Validation, container, or CI tools created specifically for the workflow.
 
 Choose the backend separately:
 
@@ -261,7 +259,7 @@ Typical configuration:
 ```bash
 export LANGSMITH_TRACING=true
 export LANGSMITH_API_KEY="lsv2_..."
-export LANGSMITH_PROJECT="tap-planner"
+export LANGSMITH_PROJECT="langchain-codex-example"
 ```
 
 Once enabled, LangChain and LangGraph executions are traced automatically, including:
@@ -277,9 +275,9 @@ Use `@traceable` for functions outside the graph that should also appear in the 
 ```python
 from langsmith import traceable
 
-@traceable(run_type="tool", name="validate-product-sample")
-def validate_product_sample(sample: dict) -> bool:
-    return all(key in sample for key in ("id", "sku", "name"))
+@traceable(run_type="tool", name="validate-record")
+def validate_record(record: dict) -> bool:
+    return all(key in record for key in ("id", "name"))
 ```
 
 The generic LangSmith quickstart may request `OPENAI_API_KEY` because it uses the OpenAI client as its example. That is not required for `ChatCodexOAuth`; local OAuth authentication is still used.
@@ -293,14 +291,14 @@ A trace can contain prompts, responses, tool arguments, and data samples. Before
 - Separate development and production projects.
 - Review the retention, region, and access policies of the LangSmith account.
 
-## 7. Recommended tap planner configuration
+## 7. Recommended workflow configuration
 
 | Responsibility | Model | Initial reasoning |
 | --- | --- | --- |
-| Documentation parsing and stream classification | Luna | `low` |
-| Global integration planning | Sol | `high` |
-| Tap and ETL implementation | Terra | `high` |
-| Semantic validation of schemas and samples | Sol | `xhigh` |
+| Documentation parsing and classification | Luna | `low` |
+| Global workflow planning | Sol | `high` |
+| Implementation | Terra | `high` |
+| Semantic validation of schemas and outputs | Sol | `xhigh` |
 | Simple repairs | Terra | `med` |
 | Exceptionally difficult problems | Sol | `max` |
 
