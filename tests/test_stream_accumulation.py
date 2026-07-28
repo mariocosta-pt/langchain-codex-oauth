@@ -1,7 +1,7 @@
 from codex_oauth.client import (
-    _StreamResponseState,
     _accumulate_response_event,
     _response_from_stream_events,
+    _StreamResponseState,
 )
 from codex_oauth.response import parse_assistant_message
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from typing import Any, Literal, cast
 
 from codex_oauth.client import CODEX_BASE_URL, AsyncCodexClient, CodexClient
@@ -11,6 +11,7 @@ from codex_oauth.models import (
     function_call_item,
     function_call_output_item,
     message_item,
+    normalize_model,
 )
 from codex_oauth.response import (
     CompletionResult,
@@ -44,7 +45,9 @@ except Exception as exc:  # pragma: no cover
     ) from exc
 
 
-def _ensure_tool_call_ids(tool_calls: list[dict[str, Any]]) -> list[ToolCall]:
+def _ensure_tool_call_ids(
+    tool_calls: Sequence[Mapping[str, Any]],
+) -> list[ToolCall]:
     normalized: list[ToolCall] = []
     for call in tool_calls:
         call_id = call.get("id")
@@ -149,11 +152,23 @@ def _tool_call_chunk(
 
 SystemPromptMode = Literal["strict", "default", "disabled"]
 
-_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
+_REASONING_EFFORTS = {
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+}
+_LITERAL_MODEL_IDS = {"codex-max", "gpt-5.1-codex-max"}
 
 
 def _split_reasoning_effort_suffix(model: str) -> tuple[str, str | None]:
-    """Split model names like `gpt-5.5-xhigh` into model + effort."""
+    """Split model names like `gpt-5.6-sol-max` into model + effort."""
+
+    if model.lower() in _LITERAL_MODEL_IDS:
+        return model, None
 
     for effort in sorted(_REASONING_EFFORTS, key=len, reverse=True):
         suffix = f"-{effort}"
@@ -329,7 +344,7 @@ def _to_input_items(
 
 
 class ChatCodexOAuth(BaseChatModel):
-    model: str = "gpt-5.2-codex"
+    model: str = "gpt-5.6-sol"
     reasoning_effort: str | None = "medium"
     reasoning_summary: str | None = None
     reasoning: dict[str, Any] | None = None
@@ -367,12 +382,17 @@ class ChatCodexOAuth(BaseChatModel):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        model_id, suffix_effort = _split_reasoning_effort_suffix(model or self.model)
+        model_id, suffix_effort = _split_reasoning_effort_suffix(
+            normalize_model(model or self.model)
+        )
         self.model = model_id
         self.reasoning = reasoning
+        initial_effort = (
+            reasoning_effort if suffix_effort is None else suffix_effort
+        )
         self.reasoning_effort, self.reasoning_summary = _normalize_reasoning_settings(
             reasoning=reasoning,
-            reasoning_effort=reasoning_effort if suffix_effort is None else suffix_effort,
+            reasoning_effort=initial_effort,
             reasoning_summary=reasoning_summary,
         )
         self.verbosity = verbosity
@@ -398,12 +418,12 @@ class ChatCodexOAuth(BaseChatModel):
 
         resolved_base_url = base_url or env_base_url or CODEX_BASE_URL
         resolved_timeout_s = (
-            float(timeout)
+            timeout
             if timeout is not None
             else (env_timeout_s if env_timeout_s is not None else 60.0)
         )
         resolved_max_retries = (
-            int(max_retries)
+            max_retries
             if max_retries is not None
             else (env_max_retries if env_max_retries is not None else 2)
         )
@@ -490,9 +510,13 @@ class ChatCodexOAuth(BaseChatModel):
                 self.reasoning_effort if reasoning_effort is None else reasoning_effort
             ),
             reasoning_summary=(
-                self.reasoning_summary if reasoning_summary is None else reasoning_summary
+                self.reasoning_summary
+                if reasoning_summary is None
+                else reasoning_summary
             ),
-            text_verbosity=self.text_verbosity if text_verbosity is None else text_verbosity,
+            text_verbosity=(
+                self.text_verbosity if text_verbosity is None else text_verbosity
+            ),
             include=self.include if include is None else include,
             extra_instructions=extra_instructions,
         )

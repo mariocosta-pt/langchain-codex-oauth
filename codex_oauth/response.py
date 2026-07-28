@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypedDict
 
@@ -187,8 +188,11 @@ def _extract_reasoning_metadata(response: dict[str, Any]) -> dict[str, Any] | No
                 if not isinstance(text, str) or not text:
                     continue
                 block_type = block.get("type")
+                normalized_type = (
+                    block_type if isinstance(block_type, str) else "summary_text"
+                )
                 block_metadata = {
-                    "type": block_type if isinstance(block_type, str) else "summary_text",
+                    "type": normalized_type,
                     "text": text,
                 }
                 sanitized_summary.append(block_metadata)
@@ -262,7 +266,10 @@ def extract_response_metadata(response: object) -> dict[str, Any]:
 
     created_at = response.get("created_at")
     if isinstance(created_at, (int, float)):
-        metadata["created_at"] = int(created_at)
+        try:
+            metadata["created_at"] = math.trunc(created_at)
+        except (OverflowError, ValueError):
+            pass
 
     reasoning = _extract_reasoning_metadata(response)
     if reasoning:
@@ -314,12 +321,17 @@ def extract_usage_metadata(response: object) -> dict[str, Any] | None:
         if isinstance(value, int):
             return value
         if isinstance(value, float):
-            return int(value)
+            try:
+                parsed = math.trunc(value)
+            except (OverflowError, ValueError):
+                return None
+            return parsed
         if isinstance(value, str):
             try:
-                return int(value)
+                parsed = int(value)
             except ValueError:
                 return None
+            return parsed
         return None
 
     input_tokens = _as_int(usage.get("input_tokens"))

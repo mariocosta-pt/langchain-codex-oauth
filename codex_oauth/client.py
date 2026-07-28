@@ -136,7 +136,9 @@ def _stream_tool_calls_to_output(
     return output
 
 
-def _stream_reasoning_to_output(stream_state: _StreamResponseState) -> list[dict[str, Any]]:
+def _stream_reasoning_to_output(
+    stream_state: _StreamResponseState,
+) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = [dict(item) for item in stream_state.reasoning_items]
 
     summary = [
@@ -328,7 +330,7 @@ class CodexClient:
 
     def _load_valid_credentials(self, http: httpx.Client) -> OAuthCredentials:
         creds = self._store.load()
-        now_ms = int(time.time() * 1000)
+        now_ms = time.time_ns() // 1_000_000
         if creds.expires > now_ms:
             return creds
 
@@ -691,7 +693,7 @@ class AsyncCodexClient:
         self, http: httpx.AsyncClient
     ) -> OAuthCredentials:
         creds = self._store.load()
-        now_ms = int(time.time() * 1000)
+        now_ms = time.time_ns() // 1_000_000
         if creds.expires > now_ms:
             return creds
 

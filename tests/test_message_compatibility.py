@@ -75,7 +75,8 @@ def test_tool_message_non_string_outputs_are_json_serialized() -> None:
 
 
 def test_to_input_items_preserves_tool_message_string_output() -> None:
-    items = _to_input_items([ToolMessage(content="plain output", tool_call_id="call_1")])
+    message = ToolMessage(content="plain output", tool_call_id="call_1")
+    items = _to_input_items([message])
 
     assert items == [
         {

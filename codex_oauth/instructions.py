@@ -14,6 +14,7 @@ from codex_oauth.models import normalize_model
 
 _GITHUB_API_RELEASES = "https://api.github.com/repos/openai/codex/releases/latest"
 _GITHUB_HTML_RELEASES = "https://github.com/openai/codex/releases/latest"
+_MODELS_CATALOG_PATH = "codex-rs/models-manager/models.json"
 
 INSTRUCTIONS_MODE_ENV = "LANGCHAIN_CODEX_OAUTH_INSTRUCTIONS_MODE"
 InstructionsMode = Literal["auto", "cache", "github", "bundled"]
@@ -38,7 +39,20 @@ class PromptFamily:
     family: str
     prompt_file: str
     cache_file: str
+    model_slug: str | None = None
+    bundled_file: str | None = None
 
+
+_GPT_56_FAMILIES = {
+    model: PromptFamily(
+        family=model,
+        prompt_file=_MODELS_CATALOG_PATH,
+        cache_file=f"{model}-instructions.md",
+        model_slug=model,
+        bundled_file="gpt-5.6-instructions.md",
+    )
+    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+}
 
 _FAMILIES: list[PromptFamily] = [
     PromptFamily(
@@ -72,6 +86,8 @@ _FAMILIES: list[PromptFamily] = [
 def _model_family(model: str) -> PromptFamily:
     model_id = normalize_model(model).lower()
 
+    if model_id in _GPT_56_FAMILIES:
+        return _GPT_56_FAMILIES[model_id]
     if "gpt-5.2-codex" in model_id or "gpt 5.2 codex" in model_id:
         return _FAMILIES[0]
     if "codex-max" in model_id:
@@ -100,7 +116,7 @@ def _load_bundled(cache_file: str) -> str | None:
 
 
 def _load_bundled_for_family(family: PromptFamily) -> str:
-    text = _load_bundled(family.cache_file)
+    text = _load_bundled(family.bundled_file or family.cache_file)
     if text:
         return text
     fallback = _load_bundled(DEFAULT_BUNDLED_CACHE_FILE)
@@ -110,6 +126,36 @@ def _load_bundled_for_family(family: PromptFamily) -> str:
         "No bundled instructions found. Reinstall the package or set "
         f"`{INSTRUCTIONS_MODE_ENV}=github` to fetch instructions."
     )
+
+
+def _instructions_url(tag: str, family: PromptFamily) -> str:
+    path = (
+        family.prompt_file
+        if family.model_slug
+        else f"codex-rs/core/{family.prompt_file}"
+    )
+    return f"https://raw.githubusercontent.com/openai/codex/{tag}/{path}"
+
+
+def _instructions_text(response: httpx.Response, family: PromptFamily) -> str:
+    if not family.model_slug:
+        return response.text
+
+    data = response.json()
+    models = data.get("models") if isinstance(data, dict) else None
+    if isinstance(models, list):
+        for model in models:
+            if not isinstance(model, dict) or model.get("slug") != family.model_slug:
+                continue
+            messages = model.get("model_messages")
+            if not isinstance(messages, dict):
+                break
+            instructions = messages.get("instructions_template")
+            if isinstance(instructions, str) and instructions:
+                return instructions
+            break
+
+    raise RuntimeError(f"No instructions found for {family.model_slug}")
 
 
 def _latest_release_tag(http: httpx.Client) -> str:
@@ -194,7 +240,7 @@ def _write_cache(
             {
                 "etag": etag,
                 "tag": tag,
-                "last_checked_ms": int(time.time() * 1000),
+                "last_checked_ms": time.time_ns() // 1_000_000,
                 "url": url,
             },
             indent=2,
@@ -234,18 +280,19 @@ def get_codex_instructions(http: httpx.Client, *, model: str) -> str:
     # mode == github or auto with no cache
     try:
         tag = _latest_release_tag(http)
-        url = f"https://raw.githubusercontent.com/openai/codex/{tag}/codex-rs/core/{family.prompt_file}"
+        url = _instructions_url(tag, family)
         response = http.get(url, timeout=30.0)
         response.raise_for_status()
+        text = _instructions_text(response, family)
         _write_cache(
             cache_path,
             meta_path,
             tag=tag,
             url=url,
             etag=response.headers.get("etag"),
-            text=response.text,
+            text=text,
         )
-        return response.text
+        return text
     except Exception:
         if mode == "github":
             raise
@@ -277,18 +324,19 @@ async def aget_codex_instructions(http: httpx.AsyncClient, *, model: str) -> str
 
     try:
         tag = await _alatest_release_tag(http)
-        url = f"https://raw.githubusercontent.com/openai/codex/{tag}/codex-rs/core/{family.prompt_file}"
+        url = _instructions_url(tag, family)
         response = await http.get(url, timeout=30.0)
         response.raise_for_status()
+        text = _instructions_text(response, family)
         _write_cache(
             cache_path,
             meta_path,
             tag=tag,
             url=url,
             etag=response.headers.get("etag"),
-            text=response.text,
+            text=text,
         )
-        return response.text
+        return text
     except Exception:
         if mode == "github":
             raise

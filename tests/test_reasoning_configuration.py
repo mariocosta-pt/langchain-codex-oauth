@@ -1,11 +1,34 @@
 from langchain_codex_oauth.chat_models import ChatCodexOAuth
 
 
-def test_model_suffix_sets_reasoning_effort_and_base_model() -> None:
-    model = ChatCodexOAuth(model="gpt-5.5-xhigh")
+def test_gpt_56_models_are_preserved() -> None:
+    for model_id in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+        assert ChatCodexOAuth(model=model_id).model == model_id
 
-    assert model.model == "gpt-5.5"
-    assert model.reasoning_effort == "xhigh"
+
+def test_default_model_is_gpt_56_sol() -> None:
+    assert ChatCodexOAuth().model == "gpt-5.6-sol"
+
+
+def test_provider_prefix_is_removed_from_model() -> None:
+    model = ChatCodexOAuth(model="openai-codex/gpt-5.6-terra")
+
+    assert model.model == "gpt-5.6-terra"
+
+
+def test_gpt_56_reasoning_effort_suffixes() -> None:
+    for effort in ("low", "medium", "high", "xhigh", "max"):
+        model = ChatCodexOAuth(model=f"gpt-5.6-sol-{effort}")
+
+        assert model.model == "gpt-5.6-sol"
+        assert model.reasoning_effort == effort
+
+
+def test_legacy_codex_max_model_is_not_parsed_as_reasoning_suffix() -> None:
+    model = ChatCodexOAuth(model="gpt-5.1-codex-max")
+
+    assert model.model == "gpt-5.1-codex-max"
+    assert model.reasoning_effort == "medium"
 
 
 def test_reasoning_dict_preserves_suffix_effort_when_effort_omitted() -> None:
