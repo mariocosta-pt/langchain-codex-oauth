@@ -4,6 +4,8 @@ Use the Codex models included with a **ChatGPT Plus/Pro** subscription inside **
 
 This project authenticates locally via OpenAI OAuth (no `OPENAI_API_KEY`) and talks to the ChatGPT/Codex backend.
 
+Guia detalhado: [usar com LangChain, LangGraph, Deep Agents e LangSmith](docs/USAR_COM_LANGCHAIN_LANGGRAPH.md).
+
 ## What this is
 
 - A dev-friendly adapter that makes Codex feel like a native-ish LangChain chat model.
