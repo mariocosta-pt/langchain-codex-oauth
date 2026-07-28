@@ -152,14 +152,16 @@ def _tool_call_chunk(
 
 SystemPromptMode = Literal["strict", "default", "disabled"]
 
-_REASONING_EFFORTS = {
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
+_REASONING_EFFORT_ALIASES = {
+    "none": "none",
+    "min": "minimal",
+    "minimal": "minimal",
+    "low": "low",
+    "med": "medium",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max",
 }
 _LITERAL_MODEL_IDS = {"codex-max", "gpt-5.1-codex-max"}
 
@@ -170,11 +172,17 @@ def _split_reasoning_effort_suffix(model: str) -> tuple[str, str | None]:
     if model.lower() in _LITERAL_MODEL_IDS:
         return model, None
 
-    for effort in sorted(_REASONING_EFFORTS, key=len, reverse=True):
-        suffix = f"-{effort}"
+    for alias in sorted(_REASONING_EFFORT_ALIASES, key=len, reverse=True):
+        suffix = f"-{alias}"
         if model.endswith(suffix):
-            return model[: -len(suffix)], effort
+            return model[: -len(suffix)], _REASONING_EFFORT_ALIASES[alias]
     return model, None
+
+
+def _normalize_reasoning_effort(effort: object) -> str | None:
+    if not isinstance(effort, str):
+        return None
+    return _REASONING_EFFORT_ALIASES.get(effort.lower(), effort)
 
 
 def _normalize_reasoning_settings(
@@ -185,14 +193,19 @@ def _normalize_reasoning_settings(
 ) -> tuple[str | None, str | None]:
     """Normalize ChatOpenAI-style reasoning config into Codex request fields."""
 
-    if reasoning is None:
-        return reasoning_effort, reasoning_summary
-
-    effort = reasoning.get("effort", reasoning_effort)
-    summary = reasoning.get("summary", reasoning_summary)
+    effort = (
+        reasoning_effort
+        if reasoning is None
+        else reasoning.get("effort", reasoning_effort)
+    )
+    summary = (
+        reasoning_summary
+        if reasoning is None
+        else reasoning.get("summary", reasoning_summary)
+    )
 
     return (
-        effort if isinstance(effort, str) else None,
+        _normalize_reasoning_effort(effort),
         summary if isinstance(summary, str) else None,
     )
 

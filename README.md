@@ -140,9 +140,11 @@ model = ChatCodexOAuth(
 )
 ```
 
-Supported effort suffixes/values are `none`, `minimal`, `low`, `medium`,
-`high`, `xhigh`, and `max`. The GPT-5.6 models exposed by Codex currently list
-`low`, `medium`, `high`, `xhigh`, and `max` reasoning levels.
+Pi-style reasoning names are supported as suffixes and explicit values:
+`min`/`minimal`, `low`, `med`/`medium`, `high`, `xhigh`, and `max`. The short
+names normalize to `minimal` and `medium`; `none` remains available for backward
+compatibility. The GPT-5.6 models exposed by Codex currently list `low`,
+`medium`, `high`, `xhigh`, and `max` reasoning levels.
 Reasoning summary values are backend/model-dependent; common values are `auto`, `concise`, `detailed`, and `none`.
 If summaries are returned, they are exposed under `AIMessage.response_metadata["reasoning"]`; encrypted reasoning content is not exposed, only marked as present.
 

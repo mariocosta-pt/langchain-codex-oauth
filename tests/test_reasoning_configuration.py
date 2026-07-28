@@ -17,11 +17,28 @@ def test_provider_prefix_is_removed_from_model() -> None:
 
 
 def test_gpt_56_reasoning_effort_suffixes() -> None:
-    for effort in ("low", "medium", "high", "xhigh", "max"):
-        model = ChatCodexOAuth(model=f"gpt-5.6-sol-{effort}")
+    efforts = {
+        "min": "minimal",
+        "minimal": "minimal",
+        "low": "low",
+        "med": "medium",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max",
+    }
+    for suffix, expected in efforts.items():
+        model = ChatCodexOAuth(model=f"gpt-5.6-sol-{suffix}")
 
         assert model.model == "gpt-5.6-sol"
-        assert model.reasoning_effort == effort
+        assert model.reasoning_effort == expected
+
+
+def test_reasoning_configuration_accepts_pi_style_aliases() -> None:
+    assert (
+        ChatCodexOAuth(reasoning={"effort": "min"}).reasoning_effort == "minimal"
+    )
+    assert ChatCodexOAuth(reasoning_effort="med").reasoning_effort == "medium"
 
 
 def test_legacy_codex_max_model_is_not_parsed_as_reasoning_suffix() -> None:
